@@ -36,25 +36,25 @@ Example result
 #### 1.2. Gaussian Blur
 Apply gaussian blur (You can modify the level of gaussian blur and images folders)
 ```bash
-python3 python3 gaussian_blur.py
+python3 gaussian_blur.py
 ```
 
 Example results
-a. Source Image
+- Source Image
 
 ![image](Boat_dataset_unity/example/boats1-6_scene1_2932.png)
 
-b. Blur Level 1 Image
+- Blur Level 1 Image
 
 ![image](Boat_dataset_unity/example/boats1-6_scene1_2932_blur1.png)
 
-c. Blur Level 2 Image
+- Blur Level 2 Image
 
 ![image](Boat_dataset_unity/example/boats1-6_scene1_2932_blur2.png)
 
 
 #### 1.3. Convert Robotx2022 Unity dataset format to COCO format
-Convert to COCO format (You can first modify the mask_ids.json and classes.txt then modify obscure rate default to 30%)
+Convert to COCO format (You can first modify the mask_ids.json and classes.txt then modify obscure rate which is default to 30%)
 ```bash
 python3 merge_json_unity.py
 ```
@@ -91,7 +91,7 @@ Convert to HuggingFace dataset format:
 ```bash
 python3 coco2hf.py
 ```
-Enter directory for unity dataset processing:
+Enter directory of huggingface dataset:
 ```bash
 cd Boat_dataset_hf
 ```
