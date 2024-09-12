@@ -1,0 +1,19 @@
+{
+    "boats1-6" : {
+        "WAM_V": 10,
+        "Boat": 20,
+        "BigBoat": 30,
+        "SailBoat": 40,
+        "BallonBoat": 50,
+        "JetSki": 60
+    },
+    "boats7-13" : {
+        "Katamaran": 10,
+        "SmallBoat": 20,
+        "SpeedBoat": 30,
+        "container_ship": 40,
+        "TugShip": 50,
+        "yacht": 60,
+        "blueboat": 70
+    }
+}

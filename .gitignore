@@ -1,0 +1,12 @@
+Boat_dataset/
+Boat_dataset_hf/annotations/*.jsonl
+Boat_dataset_unity/Images/
+Boat_dataset_unity/rgb_images/
+Boat_dataset_unity/thermal_images/
+Boat_dataset_unity/Visualization/
+Boat_dataset_unity/coco_formatted_unity_rgb_data.json
+Boat_dataset_unity/coco_formatted_unity_thermal_data.json
+Boat_dataset_unity/process_info.txt
+Boat_dataset_unity/seg_image.png
+real_dataset/
+class_statistic.csv
