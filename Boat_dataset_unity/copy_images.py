@@ -139,9 +139,10 @@ def move_images_to_folders(rgb_thermal='rgb', dest_rgb_folder='rgb_images', dest
 
                 shutil.copy(rgb_image_path, dest_rgb_folder)
                 os.rename(os.path.join(dest_rgb_folder, f'{i}.png'), os.path.join(dest_rgb_folder, f'{boats_dir}_{scene_dir}_{i}.png'))
-                if 'Scene1' in scene_dir:
-                    shutil.copy(thermal_image_path, dest_thermal_folder)
-                    os.rename(os.path.join(dest_thermal_folder, f'{i}_thermal.png'), os.path.join(dest_thermal_folder, f'{boats_dir}_{scene_dir}_{i}_thermal.png'))
+                # if 'Scene1' in scene_dir:
+                #     shutil.copy(thermal_image_path, dest_thermal_folder)
+                #     os.rename(os.path.join(dest_thermal_folder, f'{i}_thermal.png'), os.path.join(dest_thermal_folder, f'{boats_dir}_{scene_dir}_{i}_thermal.png'))
+                
                 # shutil.copy(mask_image_path, dest_mask_folder)
                 # if rgb_thermal=='rgb':
                 #     os.rename(os.path.join(dest_mask_folder, f'{i}_label.png'), os.path.join(dest_mask_folder, f'{boats_dir}_{scene_dir}_{i}.png'))
@@ -151,4 +152,4 @@ def move_images_to_folders(rgb_thermal='rgb', dest_rgb_folder='rgb_images', dest
                 #     raise ValueError("Invalid value for rgb_thermal")
                 
 
-move_images_to_folders(boats_root_path='Images', boat_count_per_scene=3002)
+move_images_to_folders(boats_root_path='Images', boat_count_per_scene=502)

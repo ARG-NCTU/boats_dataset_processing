@@ -302,10 +302,10 @@ def merge_json_files(rgb_thermal='rgb', bbox_seg='bbox', boats_root_path='~/data
         "categories": [{"id": i, "name": name} for i, name in enumerate(class_list)]
     }     
 
-coco_formatted_rgb_data = merge_json_files(rgb_thermal='rgb', bbox_seg='bbox', boats_root_path='Images', boat_count_per_scene=3002, vis=True, vis_dir='Visualization') # 3002
+coco_formatted_rgb_data = merge_json_files(rgb_thermal='rgb', bbox_seg='bbox', boats_root_path='Images', boat_count_per_scene=502, vis=True, vis_dir='Visualization') # 3002
 with open('coco_formatted_unity_rgb_data.json', 'w') as f:
     json.dump(coco_formatted_rgb_data, f, indent=4)
 
-coco_formatted_thermal_data = merge_json_files(rgb_thermal='thermal', bbox_seg='bbox', boats_root_path='Images', boat_count_per_scene=3002, vis=True, vis_dir='Visualization') # 3002
+coco_formatted_thermal_data = merge_json_files(rgb_thermal='thermal', bbox_seg='bbox', boats_root_path='Images', boat_count_per_scene=502, vis=True, vis_dir='Visualization') # 3002
 with open('coco_formatted_unity_thermal_data.json', 'w') as f:
     json.dump(coco_formatted_thermal_data, f, indent=4)
