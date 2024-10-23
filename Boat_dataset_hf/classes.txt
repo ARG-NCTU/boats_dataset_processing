@@ -9,4 +9,5 @@ SpeedBoat
 WAM_V
 container_ship
 TugShip
-sailboat_new
+yacht
+blueboat

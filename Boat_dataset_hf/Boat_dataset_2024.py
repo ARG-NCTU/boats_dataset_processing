@@ -24,9 +24,18 @@ _LICENSE = ""
 
 _URLS = {
     "classes": f"{_HOMEPAGE}/data/classes.txt",
-    "train": f"{_HOMEPAGE}/data/instances_train2024.jsonl",
-    "val": f"{_HOMEPAGE}/data/instances_val2024.jsonl",
-    # "test": f"{_HOMEPAGE}/data/instances_val2024r.jsonl"
+    "rr_train": f"{_HOMEPAGE}/data/instances_train2024_rr.jsonl",
+    "rtvrr_train": f"{_HOMEPAGE}/data/instances_train2024_rtvrr.jsonl",
+    "rvrr_train": f"{_HOMEPAGE}/data/instances_train2024_rvrr.jsonl",
+    "rtv_train": f"{_HOMEPAGE}/data/instances_train2024_rtv.jsonl",
+    "rv_train": f"{_HOMEPAGE}/data/instances_train2024_rv.jsonl",
+    "tv_train": f"{_HOMEPAGE}/data/instances_train2024_tv.jsonl",
+    "rr_val": f"{_HOMEPAGE}/data/instances_val2024_rr.jsonl",
+    "rtvrr_val": f"{_HOMEPAGE}/data/instances_val2024_rtvrr.jsonl",
+    "rvrr_val": f"{_HOMEPAGE}/data/instances_val2024_rvrr.jsonl",
+    "rtv_val": f"{_HOMEPAGE}/data/instances_val2024_rtv.jsonl",
+    "rv_val": f"{_HOMEPAGE}/data/instances_val2024_rv.jsonl",
+    "tv_val": f"{_HOMEPAGE}/data/instances_val2024_tv.jsonl",
 }
 
 class BoatDataset(datasets.GeneratorBasedBuilder):
@@ -34,7 +43,24 @@ class BoatDataset(datasets.GeneratorBasedBuilder):
     VERSION = datasets.Version("1.1.0")
     
     BUILDER_CONFIGS = [
-        datasets.BuilderConfig(name="Boat_dataset_2024", version=VERSION, description="Dataset for detecting boats in aerial images."),
+        datasets.BuilderConfig(
+            name="rr", version=VERSION, description="RGB Real dataset"
+        ),
+        datasets.BuilderConfig(
+            name="rtvrr", version=VERSION, description="RGB & Thermal Virtual + RGB Real dataset"
+        ),
+        datasets.BuilderConfig(
+            name="rvrr", version=VERSION, description="RGB Virtual + RGB Real dataset"
+        ),
+        datasets.BuilderConfig(
+            name="rtv", version=VERSION, description="RGB & Thermal Virtual dataset"
+        ),
+        datasets.BuilderConfig(
+            name="rv", version=VERSION, description="RGB Virtual dataset"
+        ),
+        datasets.BuilderConfig(
+            name="tv", version=VERSION, description="Thermal Virtual dataset"
+        )
     ]
 
     DEFAULT_CONFIG_NAME = "Boat_dataset_2024"  # Provide a default configuration
@@ -60,8 +86,22 @@ class BoatDataset(datasets.GeneratorBasedBuilder):
         )
 
     def _split_generators(self, dl_manager):
+        # Select dataset URLs based on config name
+        if self.config.name == "rr":
+            urls = {"train": _URLS["rr_train"], "val": _URLS["rr_val"]}
+        elif self.config.name == "rtvrr":
+            urls = {"train": _URLS["rtvrr_train"], "val": _URLS["rtvrr_val"]}
+        elif self.config.name == "rvrr":
+            urls = {"train": _URLS["rvrr_train"], "val": _URLS["rvrr_val"]}
+        elif self.config.name == "rtv":
+            urls = {"train": _URLS["rtv_train"], "val": _URLS["rtv_val"]}
+        elif self.config.name == "rv":
+            urls = {"train": _URLS["rv_train"], "val": _URLS["rv_val"]}
+        elif self.config.name == "tv":
+            urls = {"train": _URLS["tv_train"], "val": _URLS["tv_val"]}
+        
         # Download all files and extract them
-        downloaded_files = dl_manager.download_and_extract(_URLS)
+        downloaded_files = dl_manager.download_and_extract(urls)
 
         # Load class labels from the classes file
         with open('classes.txt', 'r') as file:
