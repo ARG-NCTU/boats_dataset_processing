@@ -25,8 +25,6 @@ huggingface-cli upload ARG-NCTU/Lifebuoy_underwater_dataset_2024 annotations/ins
 huggingface-cli upload ARG-NCTU/Lifebuoy_underwater_dataset_2024 classes.txt data/classes.txt --repo-type=dataset --commit-message="Upload classes list to hub"
 ```
 
-
-
 ### 5. Download HuggingFace dataset
 
 #### 5.2. Lifebuoy dataset
