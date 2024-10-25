@@ -1,0 +1,2 @@
+docker login
+docker push argnctu/boats_dataset_processing:cpu
