@@ -4,23 +4,27 @@ This repo is used for converting Robotx2022-Unity-dataset format to COCO format,
 ## Usage
 Clone this repo:
 ```bash
-git clone git@github.com:ARG-NCTU/boats_dataset_processing.git
+cd ~/ && git clone git@github.com:ARG-NCTU/boats_dataset_processing.git
 ```
 
 Enter this repo:
 ```bash
-cd boats_dataset_processing
+cd ~/boats_dataset_processing
 ```
 
 Run the oop docker:
 ```bash
-source docker_run.sh
+source gpu_run.sh
+```
+If you have not installed gpu driver:
+```bash
+source cpu_run.sh
 ```
 
 ### 1. Robotx2022 Unity dataset Processing
 Enter directory for unity dataset processing:
 ```bash
-cd Boat_dataset_unity
+cd ~/boats_dataset_processing/Boat_dataset_unity
 ```
 
 #### 1.1. Robotx2022 Unity dataset Visualization
@@ -103,12 +107,11 @@ python3 coco2hf.py
 ### 4. Upload HuggingFace dataset
 Enter directory of huggingface dataset:
 ```bash
-cd Boat_dataset_hf
+cd ~/boats_dataset_processing/Boat_dataset_hf
 ```
 
 Some useful instructions for uploading hugginface dataset:
 ```bash
-cd Boat_dataset_hf/
 huggingface-cli login
 huggingface-cli repo create ARG-NCTU/Boat_dataset_2024 --type dataset
 huggingface-cli upload ARG-NCTU/Boat_dataset_2024 Boat_dataset_2024.py --repo-type=dataset --commit-message="Update script to hub"
@@ -153,14 +156,22 @@ huggingface-cli login
 huggingface-cli download ARG-NCTU/Boat_dataset_2024 --include "*.jsonl" --repo-type dataset --local-dir ~/huggingface-notebooks/transformers_doc/en/pytorch
 huggingface-cli download ARG-NCTU/Boat_dataset_2024 data/classes.txt --repo-type dataset --local-dir ~/huggingface-notebooks/transformers_doc/en/pytorch
 huggingface-cli download ARG-NCTU/Boat_dataset_2024 data/images.zip --repo-type dataset --local-dir ~/huggingface-notebooks/transformers_doc/en/pytorch
-
 ```
 
 Use Boat Dataset for object detection model training example:
 ```bash
 cd ~/huggingface-notebooks/
-source jupyter_notebook.sh
+source jupyter_notebook.sh 
 ```
 
 Ctrl + click the website link. 
 You can start edit jupyter notebook in transformers_doc/en/pytorch.
+
+Another way is run python script:
+```bash
+cd ~/huggingface-notebooks/transformers_doc/en/pytorch
+huggingface-cli login
+python3 train_detr_boat.py
+```
+
+For Lifebuoy dataset, please refer to lifebuoy_huggingface_upload.md
