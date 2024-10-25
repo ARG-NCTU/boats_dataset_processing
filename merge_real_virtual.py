@@ -238,6 +238,32 @@ def process_datasets(unity_dataset_dir, real_dataset_dir, output_dir):
     copy_images(merged_train_rtvrr['images'], [f'{unity_dataset_dir}/rgb_images/', f'{real_dataset_dir}/images/'], f'{output_dir}/train2024/')
     copy_images(merged_val_rtvrr['images'], [f'{unity_dataset_dir}/rgb_images/', f'{real_dataset_dir}/images/'], f'{output_dir}/val2024/')
 
+def process_unity_rgb_dataset(unity_dataset_dir, output_dir):
+    ############################## Load and clean datasets ##############################
+    # Load and clean the virtual RGB dataset
+    virtual_dataset_rgb = load_json(f'{unity_dataset_dir}/coco_formatted_unity_rgb_data.json')
+    virtual_dataset_rgb, invalid_rgb_annotations = remove_invalid_annotations(virtual_dataset_rgb)
+    virtual_dataset_rgb_anno_len = len(virtual_dataset_rgb['annotations'])
+    virtual_dataset_rgb_image_len = len(virtual_dataset_rgb['images'])
+
+    ############################## Split datasets ##############################
+    # Split virtual dataset into train and validation sets
+    virtual_train_rv, virtual_val_rv = split_dataset(virtual_dataset_rgb, val_ratio=0.2)
+
+    print('rv splitted train num: ', len(virtual_train_rv['images']))
+    print('rv splitted val num: ', len(virtual_val_rv['images']))
+
+    ############################## Merge and save datasets ##############################
+    # Save only virtual RGB dataset
+    save_json(virtual_train_rv, f'{output_dir}/annotations/instances_train2024.json')
+    save_json(virtual_val_rv, f'{output_dir}/annotations/instances_val2024.json')
+
+    ############################## Copy images to output directories ##############################
+    # Copy images for both merged datasets to appropriate directories
+    copy_images(virtual_train_rv['images'], [f'{unity_dataset_dir}/rgb_images/'], f'{output_dir}/images/')
+    copy_images(virtual_val_rv['images'], [f'{unity_dataset_dir}/rgb_images/'], f'{output_dir}/train2024/')
+    copy_images(virtual_val_rv['images'], [f'{unity_dataset_dir}/rgb_images/'], f'{output_dir}/val2024/')
+
 # Main function using argparse for command-line arguments
 def main():
     parser = argparse.ArgumentParser(description="Process and merge virtual and real datasets.")
@@ -246,12 +272,20 @@ def main():
     parser.add_argument('--unity_dataset_dir', default='Boat_dataset_unity', help="Path to the Unity dataset directory.")
     parser.add_argument('--real_dataset_dir', default='real_dataset', help="Path to the real dataset directory.")
     parser.add_argument('--output_dir', default='Boat_dataset', help="Path to the output directory.")
+    parser.add_argument('--unity_rgb_only', action='store_true', help="Process only the Unity RGB dataset.")
     
     # Parse arguments
     args = parser.parse_args()
 
-    # Call process_datasets function with parsed arguments
-    process_datasets(args.unity_dataset_dir, args.real_dataset_dir, args.output_dir)
+    if args.unity_rgb_only:
+        # Call process_unity_rgb_dataset function with parsed arguments
+        process_unity_rgb_dataset(args.unity_dataset_dir, args.output_dir)
+    else:
+        # Call process_datasets function with parsed arguments
+        process_datasets(args.unity_dataset_dir, args.real_dataset_dir, args.output_dir)
 
 if __name__ == '__main__':
     main()
+
+# python3 merge_real_virtual.py --unity_dataset_dir Boat_dataset_unity/Boats --real_dataset_dir real_dataset --output_dir Boat_dataset
+# python3 merge_real_virtual.py --unity_rgb_only --unity_dataset_dir Boat_dataset_unity/Lifebuoy --output_dir Lifebuoy_dataset

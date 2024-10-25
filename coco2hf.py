@@ -125,3 +125,8 @@ def main():
 
 if __name__ == '__main__':
     main()
+
+# Usage:
+# python3 coco2hf.py --input_dir Boat_dataset/annotations --output_dir Boat_dataset_hf/annotations
+# python3 coco2hf.py --input_dir Lifebuoy_dataset/annotations --output_dir Lifebuoy_dataset_hf/annotations
+# python3 coco2hf.py --input_dir real_lifebuoy_dataset/annotations --output_dir real_lifebuoy_dataset_hf/annotations
