@@ -9,11 +9,11 @@ import json
 from PIL import Image
 from tqdm import tqdm
 import argparse
-from merge_real_virtual import split_dataset
+from merge_real_virtual import split_dataset, copy_images
 
 def load_classes():
     class_list = []
-    with open("~/boats_dataset_processing/classes.txt", "r") as f:
+    with open("bags_processing/classes.txt", "r") as f:
         class_list = [cname.strip() for cname in f.readlines()]
     return class_list
 
@@ -62,8 +62,17 @@ def labelme2real(labelme_dir, output_image_dir):
                 x1, y1 = int(round(x1)), int(round(y1))
                 x2, y2 = points[1]
                 x2, y2 = int(round(x2)), int(round(y2))
+                if x1 > x2:
+                    x1, x2 = x2, x1
+                if y1 > y2:
+                    y1, y2 = y2, y1
                 w = x2 - x1
                 h = y2 - y1
+                if x1 < 0 or y1 < 0 or w <= 0 or h <= 0 or x2 > width or y2 > height:
+                    print("====================================")
+                    print(f"Invalid json file {labelme_file}, bbox: {x1, y1, x2, y2}")
+                    print("====================================")
+                    continue
                 area = w * h
                 bbox = [x1, y1, w, h]
                 category_id = class_list.index(label)
@@ -129,9 +138,11 @@ def main():
     save_coco(train_data, f"{args.output_dir}/annotations/instances_train2024.json")
     save_coco(val_data, f"{args.output_dir}/annotations/instances_val2024.json")
 
+    os.makedirs(output_image_dir, exist_ok=True)
+
     os.system(f"cp bags_processing/classes.txt {args.output_dir}/annotations/classes.txt")
 
 if __name__ == "__main__":
     main()
 
-
+# python3 labelme2real.py --labelme_dir bags_processing/d435_images --output_dir Kaohsiung_Port_dataset
