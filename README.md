@@ -98,10 +98,20 @@ Get stats of annotations
 python3 statistic_class.py
 ```
 
+Simple annotations (just train and validation two annotation files):
+```bash
+python3 statistic_class_simple.py
+```
+
 ### 3. Convert COCO format to HuggingFace dataset format
 Convert to HuggingFace dataset format:
 ```bash
-python3 coco2hf.py
+python3 coco2jsonl.py
+```
+
+If you want to make Data Viewer available:
+```bash
+python3 coco2parquet.py
 ```
 
 ### 4. Upload HuggingFace dataset
@@ -113,7 +123,6 @@ cd ~/boats_dataset_processing/Boat_dataset_hf
 Some useful instructions for uploading hugginface dataset:
 ```bash
 huggingface-cli login
-huggingface-cli repo create ARG-NCTU/Boat_dataset_2024 --type dataset
 huggingface-cli upload ARG-NCTU/Boat_dataset_2024 Boat_dataset_2024.py --repo-type=dataset --commit-message="Update script to hub"
 huggingface-cli upload ARG-NCTU/Boat_dataset_2024 README.md --repo-type=dataset --commit-message="Update README to hub"
 ```
@@ -132,6 +141,19 @@ Upload images
 cd ~/boats_dataset_processing/Boat_dataset
 zip -r images.zip images/
 huggingface-cli upload ARG-NCTU/Boat_dataset_2024 images.zip data/images.zip --repo-type=dataset --commit-message="Upload images to hub"
+huggingface-cli upload ARG-NCTU/Boat_dataset_2024 ./annotations ./data --repo-type=dataset -commit-message="Upload training and val labels to hub"
+```
+
+Upload coco format dataset
+```bash
+cd ~/boats_dataset_processing/Boat_dataset
+huggingface-cli upload ARG-NCTU/Boat_dataset_2024 annotations/classes.txt data/classes.txt --repo-type=dataset --commit-message="Upload classes list to hub"
+huggingface-cli upload ARG-NCTU/Boat_dataset_coco_2024 annotations/classes.txt classes.txt --repo-type=dataset --commit-message="Upload classes list to hub"
+huggingface-cli upload ARG-NCTU/Boat_dataset_coco_2024 ./annotations ./annotations --repo-type=dataset -commit-message="Upload training and val labels to hub"
+zip -r train2024.zip train2024/
+huggingface-cli upload ARG-NCTU/Boat_dataset_coco_2024 ./train2024.zip ./train2024.zip --repo-type=dataset --commit-message="Upload training images to hub"
+zip -r val2024.zip val2024/
+huggingface-cli upload ARG-NCTU/Boat_dataset_coco_2024 ./val2024.zip ./val2024.zip --repo-type=dataset --commit-message="Upload val images to hub"
 ```
 
 Exit the Docker
@@ -153,7 +175,7 @@ cd ~/huggingface-notebooks/transformers_doc/en/pytorch
 Download HuggingFace dataset:
 ```bash
 huggingface-cli login
-huggingface-cli download ARG-NCTU/Boat_dataset_2024 --include "*.jsonl" --repo-type dataset --local-dir ~/huggingface-notebooks/transformers_doc/en/pytorch
+huggingface-cli download ARG-NCTU/Boat_dataset_2024 --repo-type dataset --local-dir ~/huggingface-notebooks/transformers_doc/en/pytorch
 huggingface-cli download ARG-NCTU/Boat_dataset_2024 data/classes.txt --repo-type dataset --local-dir ~/huggingface-notebooks/transformers_doc/en/pytorch
 huggingface-cli download ARG-NCTU/Boat_dataset_2024 data/images.zip --repo-type dataset --local-dir ~/huggingface-notebooks/transformers_doc/en/pytorch
 ```
