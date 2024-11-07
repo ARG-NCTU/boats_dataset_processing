@@ -65,3 +65,6 @@ print(dataset_rtv)
 print(dataset_rv)
 print(dataset_tv)
 print(dataset_rr)
+
+# print the first example in the training set with pretty print
+print(dataset_rtvrr['train'][0])
