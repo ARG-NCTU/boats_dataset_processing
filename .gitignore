@@ -21,23 +21,37 @@ Boat_dataset_unity/coco_formatted_unity_thermal_data.json
 Boat_dataset_unity/process_info.txt
 Boat_dataset_unity/seg_image.png
 
-real_dataset/
+real_boat_dataset/
 real_lifebuoy_dataset/
 real_lifebuoy_dataset_hf/
 
-class_statistic.csv
+class_statistics.csv
 
 bags_processing/d435_bags/*
 bags_processing/d435_images/*
 bags_processing/d435_videos/*
+bags_processing/Visualization/*
 bags_processing/backup/
 
 Boat_dataset/
+Boat_dataset_backup/
 Boat_dataset_hf/annotations/
-Boat_dataset_hf/annotations_backup/
 
 Lifebuoy_dataset/
-Lifebuoy_dataset_hf/annotations/
+Lifebuoy_dataset_hf/
+
+Lifebuoy_underwater_dataset/
+Lifebuoy_underwater_dataset_hf/
+
+Kaohsiung_Port_dataset/
+Kaohsiung_Port_dataset_hf/
+
+stitching/stitched_images
+
+videos_processing/detr_output_videos/
+videos_processing/source_video/
+videos_processing/stitched_videos_accelerated/
+videos_processing/video/
 
 __pycache__/
 .vscode/
