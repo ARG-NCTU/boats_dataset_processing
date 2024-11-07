@@ -4,12 +4,22 @@ This repo is used for converting Robotx2022-Unity-dataset format to COCO format,
 ## Usage
 Clone this repo:
 ```bash
-cd ~/ && git clone git@github.com:ARG-NCTU/boats_dataset_processing.git
+cd ~/ && git clone --recursive git@github.com:ARG-NCTU/boats_dataset_processing.git
+```
+
+Or pull this repo:
+```bash
+cd ~/boats_dataset_processing && git pull
 ```
 
 Enter this repo:
 ```bash
 cd ~/boats_dataset_processing
+```
+
+Init submodule:
+```bash
+git submodule update --init --recursive
 ```
 
 Run the oop docker:
