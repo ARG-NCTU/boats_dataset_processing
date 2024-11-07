@@ -53,5 +53,14 @@ videos_processing/source_video/
 videos_processing/stitched_videos_accelerated/
 videos_processing/video/
 
+bags_processing/acc_output_videos/
+bags_processing/backup/
+bags_processing/backup2/
+bags_processing/d435_bags/
+bags_processing/d435_images/
+bags_processing/d435_videos/
+bags_processing/label/
+bags_processing/Visualization/
+
 __pycache__/
 .vscode/
