@@ -136,6 +136,18 @@ def copy_images(image_list, source_dirs, dest_dir):
                 break
     print(f"Copied {i+1} images.")
 
+def check_img_exist(dataset, img_dir):
+    for img in dataset['images']:
+        img_path = os.path.join(img_dir, img['file_name'])
+        if not os.path.exists(img_path):
+            print(f"Image not found: {img_path}")
+            # remove the image and anno from the dataset
+            dataset['images'].remove(img)
+            for anno in dataset['annotations']:
+                if anno['image_id'] == img['id']:
+                    dataset['annotations'].remove(anno)
+    return dataset
+
 def process_datasets(unity_dataset_dir, real_dataset_dir, output_dir):
 
     os.makedirs(output_dir, exist_ok=True)
@@ -242,6 +254,7 @@ def process_unity_rgb_dataset(unity_dataset_dir, output_dir):
     ############################## Load and clean datasets ##############################
     # Load and clean the virtual RGB dataset
     virtual_dataset_rgb = load_json(f'{unity_dataset_dir}/coco_formatted_unity_rgb_data.json')
+    virtual_dataset_rgb = check_img_exist(virtual_dataset_rgb, f'{unity_dataset_dir}/rgb_images/')
     virtual_dataset_rgb, invalid_rgb_annotations = remove_invalid_annotations(virtual_dataset_rgb)
     virtual_dataset_rgb_anno_len = len(virtual_dataset_rgb['annotations'])
     virtual_dataset_rgb_image_len = len(virtual_dataset_rgb['images'])
@@ -254,6 +267,17 @@ def process_unity_rgb_dataset(unity_dataset_dir, output_dir):
     print('rv splitted val num: ', len(virtual_val_rv['images']))
 
     ############################## Merge and save datasets ##############################
+    os.makedirs(output_dir, exist_ok=True)
+    os.makedirs(f'{output_dir}/annotations', exist_ok=True)
+    if os.path.exists(f'{output_dir}/images'):
+        shutil.rmtree(f'{output_dir}/images')
+    if os.path.exists(f'{output_dir}/train2024'):
+        shutil.rmtree(f'{output_dir}/train2024')
+    if os.path.exists(f'{output_dir}/val2024'):
+        shutil.rmtree(f'{output_dir}/val2024')
+    os.makedirs(f'{output_dir}/images', exist_ok=True)
+    os.makedirs(f'{output_dir}/train2024', exist_ok=True)
+    os.makedirs(f'{output_dir}/val2024', exist_ok=True)
     # Save only virtual RGB dataset
     save_json(virtual_train_rv, f'{output_dir}/annotations/instances_train2024.json')
     save_json(virtual_val_rv, f'{output_dir}/annotations/instances_val2024.json')
@@ -269,8 +293,8 @@ def main():
     parser = argparse.ArgumentParser(description="Process and merge virtual and real datasets.")
     
     # Define arguments
-    parser.add_argument('--unity_dataset_dir', default='Boat_dataset_unity', help="Path to the Unity dataset directory.")
-    parser.add_argument('--real_dataset_dir', default='real_dataset', help="Path to the real dataset directory.")
+    parser.add_argument('--unity_dataset_dir', default='Boat_dataset_unity/Boats', help="Path to the Unity dataset directory.")
+    parser.add_argument('--real_dataset_dir', default='real_boat_dataset', help="Path to the real dataset directory.")
     parser.add_argument('--output_dir', default='Boat_dataset', help="Path to the output directory.")
     parser.add_argument('--unity_rgb_only', action='store_true', help="Process only the Unity RGB dataset.")
     
@@ -287,5 +311,6 @@ def main():
 if __name__ == '__main__':
     main()
 
-# python3 merge_real_virtual.py --unity_dataset_dir Boat_dataset_unity/Boats --real_dataset_dir real_dataset --output_dir Boat_dataset
+# python3 merge_real_virtual.py --unity_dataset_dir Boat_dataset_unity/Boats --real_dataset_dir real_boat_dataset --output_dir Boat_dataset
 # python3 merge_real_virtual.py --unity_rgb_only --unity_dataset_dir Boat_dataset_unity/Lifebuoy --output_dir Lifebuoy_dataset
+# python3 merge_real_virtual.py --unity_rgb_only --unity_dataset_dir Boat_dataset_unity/Boats --output_dir Boat_dataset
