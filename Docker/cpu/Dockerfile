@@ -55,26 +55,28 @@ RUN apt-get -o Acquire::ForceIPv4=true update && apt-get -yq dist-upgrade \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-
 ###################################### ROS #####################################
+RUN echo "deb http://packages.ros.org/ros/ubuntu focal main" > /etc/apt/sources.list.d/ros1-latest.list \
+    && apt-key adv --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys C1CF6E31E6BADE8868B172B4F42ED6FBAB17C654 \
+    && apt-get update && apt-get install -y --no-install-recommends \
+    ros-noetic-desktop-full=1.5.0-1* \
+    && rm -rf /var/lib/apt/lists/*
 
-RUN sh -c 'echo "deb http://packages.ros.org/ros/ubuntu $(lsb_release -sc) main" > /etc/apt/sources.list.d/ros-latest.list'
-
-RUN apt-key adv --keyserver 'hkp://keyserver.ubuntu.com:80' --recv-key C1CF6E31E6BADE8868B172B4F42ED6FBAB17C654
-
-# install bootstrap tools
 RUN apt-get -o Acquire::ForceIPv4=true update && apt-get -o Acquire::ForceIPv4=true install --no-install-recommends -y \
     ros-$ROS_DISTRO-desktop-full \
     ros-$ROS_DISTRO-rosbridge-suite \
     ros-$ROS_DISTRO-cv-bridge \
     ros-$ROS_DISTRO-rosbag \
+    ros-$ROS_DISTRO-rviz-imu-plugin \
+    python3-catkin-tools \
     python3-rosdep \
     python3-rosinstall \
     python3-rosinstall-generator \
     python3-wstool \
-    && rosdep update \
-    && rosdep install --from-paths /opt/ros/$ROS_DISTRO/share --ignore-src --rosdistro $ROS_DISTRO -y \
+    python3-vcstool \
+    && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
+
 
 
 ##################################### PIP ######################################
@@ -92,6 +94,15 @@ RUN pip3 install \
     pytest-skip-slow \
     rich \
     opencv-python
+
+###################################### ROSBRIDGE #####################################
+RUN python3 -m pip install --upgrade pip \
+    roslibpy \
+    pymavlink
+
+RUN sudo -H pip install --upgrade twisted \
+    cryptography \
+    pyOpenSSL
 
 ##################################### HuggingFace #####################################
 RUN pip3 install transformers \
