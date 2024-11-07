@@ -1,28 +1,113 @@
+
 ### 4. Upload HuggingFace dataset
 
 #### 4.2. Lifebuoy dataset
 
 Upload dataset
 ```bash
-cd Lifebuoy_dataset_hf/
+cd ~/boats_dataset_processing/Lifebuoy_dataset_hf/
 huggingface-cli login
 
-huggingface-cli upload ARG-NCTU/Lifebuoy_dataset_2024 annotations/instances_train2024.jsonl data/instances_train2024.jsonl --repo-type=dataset --commit-message="Upload training labels to hub"
-huggingface-cli upload ARG-NCTU/Lifebuoy_dataset_2024 annotations/instances_val2024.jsonl data/instances_val2024.jsonl --repo-type=dataset --commit-message="Upload val labels to hub"
+huggingface-cli upload ARG-NCTU/Lifebuoy_dataset_2024 README.md --repo-type=dataset --commit-message="Update README to hub"
+
+huggingface-cli upload ARG-NCTU/Lifebuoy_dataset_2024 annotations/instances_train2024.parquet data/instances_train2024.parquet --repo-type=dataset --commit-message="Upload training labels to hub"
+huggingface-cli upload ARG-NCTU/Lifebuoy_dataset_2024 annotations/instances_val2024.parquet data/instances_val2024.parquet --repo-type=dataset --commit-message="Upload val labels to hub"
+
+huggingface-cli upload ARG-NCTU/Lifebuoy_dataset_2024 classes.txt data/classes.txt --repo-type=dataset --commit-message="Upload classes list to hub"
+huggingface-cli upload ARG-NCTU/Lifebuoy_dataset_coco_2024 classes.txt classes.txt --repo-type=dataset --commit-message="Upload classes list to hub"
+```
+
+Upload coco format dataset
+```bash
+cd ~/boats_dataset_processing/Lifebuoy_dataset
+zip -r images.zip images/
+huggingface-cli upload ARG-NCTU/Lifebuoy_dataset_2024 ./images.zip ./data/images.zip --repo-type=dataset --commit-message="Upload all images to hub"
+zip -r train2024.zip train2024/
+huggingface-cli upload ARG-NCTU/Lifebuoy_dataset_coco_2024 ./annotations ./annotations --repo-type=dataset --commit-message="Upload training and val labels to hub"
+zip -r train2024.zip train2024/
+huggingface-cli upload ARG-NCTU/Lifebuoy_dataset_coco_2024 ./train2024.zip ./train2024.zip --repo-type=dataset --commit-message="Upload training images to hub"
+zip -r val2024.zip val2024/
+huggingface-cli upload ARG-NCTU/Lifebuoy_dataset_coco_2024 ./val2024.zip ./val2024.zip --repo-type=dataset --commit-message="Upload val images to hub"
 ```
 
 #### 4.3. Lifebuoy underwater dataset
 
 Upload dataset
 ```bash
+cd ~/boats_dataset_processing/Lifebuoy_underwater_dataset_hf/
 huggingface-cli login
 
-huggingface-cli upload ARG-NCTU/Lifebuoy_underwater_dataset_2024 Lifebuoy_underwater_dataset_2024.py --repo-type=dataset --commit-message="Update script to hub"
 huggingface-cli upload ARG-NCTU/Lifebuoy_underwater_dataset_2024 README.md --repo-type=dataset --commit-message="Update README to hub"
-
-huggingface-cli upload ARG-NCTU/Lifebuoy_underwater_dataset_2024 annotations/instances_train2024.jsonl data/instances_train2024.jsonl --repo-type=dataset --commit-message="Upload training labels to hub"
-huggingface-cli upload ARG-NCTU/Lifebuoy_underwater_dataset_2024 annotations/instances_val2024.jsonl data/instances_val2024.jsonl --repo-type=dataset --commit-message="Upload val labels to hub"
+huggingface-cli upload ARG-NCTU/Lifebuoy_underwater_dataset_2024 annotations/instances_train2024.parquet data/instances_train2024.parquet --repo-type=dataset --commit-message="Upload training labels to hub"
+huggingface-cli upload ARG-NCTU/Lifebuoy_underwater_dataset_2024 annotations/instances_val2024.parquet data/instances_val2024.parquet --repo-type=dataset --commit-message="Upload val labels to hub"
 huggingface-cli upload ARG-NCTU/Lifebuoy_underwater_dataset_2024 classes.txt data/classes.txt --repo-type=dataset --commit-message="Upload classes list to hub"
+huggingface-cli upload ARG-NCTU/Lifebuoy_underwater_dataset_coco_2024 classes.txt classes.txt --repo-type=dataset --commit-message="Upload classes list to hub"
+```
+
+Upload coco format dataset
+```bash
+cd ~/boats_dataset_processing/Lifebuoy_underwater_dataset
+zip -r images.zip images/
+huggingface-cli upload ARG-NCTU/Lifebuoy_underwater_dataset_2024 ./images.zip ./data/images.zip --repo-type=dataset --commit-message="Upload all images to hub"
+huggingface-cli upload ARG-NCTU/Lifebuoy_underwater_dataset_coco_2024 ./annotations ./annotations --repo-type=dataset --commit-message="Upload training and val labels to hub"
+zip -r train2024.zip train2024/
+huggingface-cli upload ARG-NCTU/Lifebuoy_underwater_dataset_coco_2024 ./train2024.zip ./train2024.zip --repo-type=dataset --commit-message="Upload training images to hub"
+zip -r val2024.zip val2024/
+huggingface-cli upload ARG-NCTU/Lifebuoy_underwater_dataset_coco_2024 ./val2024.zip ./val2024.zip --repo-type=dataset --commit-message="Upload val images to hub"
+```
+
+#### 4.4. Real Lifebuoy dataset
+
+Upload dataset
+```bash
+cd ~/boats_dataset_processing/real_lifebuoy_dataset_hf/
+huggingface-cli login
+
+huggingface-cli upload ARG-NCTU/Real_Lifebuoy_dataset_2024 README.md --repo-type=dataset --commit-message="Update README to hub"
+huggingface-cli upload ARG-NCTU/Real_Lifebuoy_dataset_2024 annotations/instances_train2024.parquet data/instances_train2024.parquet --repo-type=dataset --commit-message="Upload training labels to hub"
+huggingface-cli upload ARG-NCTU/Real_Lifebuoy_dataset_2024 annotations/instances_val2024.parquet data/instances_val2024.parquet --repo-type=dataset --commit-message="Upload val labels to hub"
+
+huggingface-cli upload ARG-NCTU/Real_Lifebuoy_dataset_2024 classes.txt data/classes.txt --repo-type=dataset --commit-message="Upload classes list to hub"
+huggingface-cli upload ARG-NCTU/Real_Lifebuoy_dataset_coco_2024 classes.txt classes.txt --repo-type=dataset --commit-message="Upload classes list to hub"
+```
+
+Upload coco format dataset
+```bash
+cd ~/boats_dataset_processing/real_lifebuoy_dataset
+zip -r images.zip images/
+huggingface-cli upload ARG-NCTU/Real_Lifebuoy_dataset_2024 ./images.zip ./data/images.zip --repo-type=dataset --commit-message="Upload all images to hub"
+huggingface-cli upload ARG-NCTU/Real_Lifebuoy_dataset_coco_2024 ./annotations ./annotations --repo-type=dataset --commit-message="Upload training and val labels to hub"
+zip -r train2024.zip train2024/
+huggingface-cli upload ARG-NCTU/Real_Lifebuoy_dataset_coco_2024 ./train2024.zip ./train2024.zip --repo-type=dataset --commit-message="Upload training images to hub"
+zip -r val2024.zip val2024/
+huggingface-cli upload ARG-NCTU/Real_Lifebuoy_dataset_coco_2024 ./val2024.zip ./val2024.zip --repo-type=dataset --commit-message="Upload val images to hub"
+```
+
+#### 4.5. Kaohsiung Port dataset
+
+Upload dataset
+```bash
+cd ~/boats_dataset_processing/Kaohsiung_Port_dataset_hf/
+huggingface-cli login
+
+huggingface-cli upload ARG-NCTU/Kaohsiung_Port_dataset_2024 README.md --repo-type=dataset --commit-message="Update README to hub"
+huggingface-cli upload ARG-NCTU/Kaohsiung_Port_dataset_2024 annotations/instances_train2024.parquet data/instances_train2024.parquet --repo-type=dataset --commit-message="Upload training labels to hub"
+huggingface-cli upload ARG-NCTU/Kaohsiung_Port_dataset_2024 annotations/instances_val2024.parquet data/instances_val2024.parquet --repo-type=dataset --commit-message="Upload val labels to hub"
+
+```
+
+Upload coco format dataset
+```bash
+cd ~/boats_dataset_processing/Kaohsiung_Port_dataset
+huggingface-cli upload ARG-NCTU/Kaohsiung_Port_dataset_2024 annotations/classes.txt data/classes.txt --repo-type=dataset --commit-message="Upload classes list to hub"
+huggingface-cli upload ARG-NCTU/Kaohsiung_Port_dataset_coco_2024 annotations/classes.txt classes.txt --repo-type=dataset --commit-message="Upload classes list to hub"
+huggingface-cli upload ARG-NCTU/Kaohsiung_Port_dataset_coco_2024 ./annotations ./data --repo-type=dataset --commit-message="Upload training and val labels and classes to hub"
+zip -r images.zip images/
+huggingface-cli upload ARG-NCTU/Kaohsiung_Port_dataset_2024 ./images.zip ./data/images.zip --repo-type=dataset --commit-message="Upload all images to hub"
+zip -r train2024.zip train2024/
+huggingface-cli upload ARG-NCTU/Kaohsiung_Port_dataset_coco_2024 ./train2024.zip ./train2024.zip --repo-type=dataset --commit-message="Upload training images to hub"
+zip -r val2024.zip val2024/
+huggingface-cli upload ARG-NCTU/Kaohsiung_Port_dataset_coco_2024 ./val2024.zip ./val2024.zip --repo-type=dataset --commit-message="Upload val images to hub"
 ```
 
 ### 5. Download HuggingFace dataset
@@ -31,7 +116,7 @@ huggingface-cli upload ARG-NCTU/Lifebuoy_underwater_dataset_2024 classes.txt dat
 
 Download dataset
 ```bash
-huggingface-cli download ARG-NCTU/Lifebuoy_dataset_2024 --include "*.jsonl" --repo-type dataset --local-dir ~/huggingface-notebooks/transformers_doc/en/pytorch
+huggingface-cli download ARG-NCTU/Lifebuoy_dataset_2024 --include "*.parquet" --repo-type dataset --local-dir ~/huggingface-notebooks/transformers_doc/en/pytorch
 huggingface-cli download ARG-NCTU/Lifebuoy_dataset_2024 data/classes.txt --repo-type dataset --local-dir ~/huggingface-notebooks/transformers_doc/en/pytorch
 ```
 
@@ -39,7 +124,7 @@ huggingface-cli download ARG-NCTU/Lifebuoy_dataset_2024 data/classes.txt --repo-
 
 Download dataset
 ```bash
-huggingface-cli download ARG-NCTU/Lifebuoy_underwater_dataset_2024 --include "*.jsonl" --repo-type dataset --local-dir ~/huggingface-notebooks/transformers_doc/en/pytorch
+huggingface-cli download ARG-NCTU/Lifebuoy_underwater_dataset_2024 --include "*.parquet" --repo-type dataset --local-dir ~/huggingface-notebooks/transformers_doc/en/pytorch
 huggingface-cli download ARG-NCTU/Lifebuoy_underwater_dataset_2024 data/classes.txt --repo-type dataset --local-dir ~/huggingface-notebooks/transformers_doc/en/pytorch
 ```
 
@@ -57,7 +142,7 @@ cd ~/huggingface-notebooks/transformers_doc/en/pytorch
 Download HuggingFace dataset:
 ```bash
 huggingface-cli login
-huggingface-cli download ARG-NCTU/Boat_dataset_2024 --include "*.jsonl" --repo-type dataset --local-dir ~/huggingface-notebooks/transformers_doc/en/pytorch
+huggingface-cli download ARG-NCTU/Boat_dataset_2024 --include "*.parquet" --repo-type dataset --local-dir ~/huggingface-notebooks/transformers_doc/en/pytorch
 huggingface-cli download ARG-NCTU/Boat_dataset_2024 data/classes.txt --repo-type dataset --local-dir ~/huggingface-notebooks/transformers_doc/en/pytorch
 huggingface-cli download ARG-NCTU/Boat_dataset_2024 data/images.zip --repo-type dataset --local-dir ~/huggingface-notebooks/transformers_doc/en/pytorch
 ```
@@ -76,4 +161,24 @@ Another way is run python script:
 cd ~/huggingface-notebooks/transformers_doc/en/pytorch
 huggingface-cli login
 python3 python3 train_detr_lifebuoy.py
+```
+
+### 7. Upload testing video to hub
+
+```bash
+huggingface-cli login
+cd ~/boats_dataset_processing/Lifebuoy_dataset_hf/
+huggingface-cli upload ARG-NCTU/Lifebuoy_dataset_2024 ./lifebuoy_detection.mp4 ./video/lifebuoy_detection.mp4 --repo-type=dataset --commit-message="Upload testing video to hub"
+
+cd ~/boats_dataset_processing/Lifebuoy_underwater_dataset_hf/
+huggingface-cli upload ARG-NCTU/Lifebuoy_underwater_dataset_2024 ./lifebuoy_underwater_detection.mp4 ./video/lifebuoy_underwater_detection.mp4 --repo-type=dataset --commit-message="Upload testing video to hub"
+
+cd ~/boats_dataset_processing/real_lifebuoy_dataset_hf/
+huggingface-cli upload ARG-NCTU/Real_Lifebuoy_dataset_2024 ./detr_finetuned_2.mp4 ./video/detr_finetuned_2.mp4 --repo-type=dataset --commit-message="Upload testing video to hub"
+huggingface-cli upload ARG-NCTU/Real_Lifebuoy_dataset_2024 ./detr_finetuned_1vs2.mp4 ./video/detr_finetuned_1vs2.mp4 --repo-type=dataset --commit-message="Upload testing video to hub"
+
+cd ~/boats_dataset_processing/Kaohsiung_Port_dataset_hf/
+huggingface-cli upload ARG-NCTU/Lifebuoy_underwater_dataset_2024 ./1107_kaohsiung_port1_out.mp4 ./video/1107_kaohsiung_port1_out.mp4 --repo-type=dataset --commit-message="Upload testing video to hub"
+huggingface-cli upload ARG-NCTU/Kaohsiung_Port_dataset_2024 ./1107_kaohsiung_port2_out.mp4 ./video/1107_kaohsiung_port2_out.mp4 --repo-type=dataset --commit-message="Upload testing video to hub"
+
 ```
