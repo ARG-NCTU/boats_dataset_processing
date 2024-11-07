@@ -1,0 +1,3 @@
+[submodule "Panorama"]
+	path = Panorama
+	url = git@github.com:ARG-NCTU/Panorama.git
