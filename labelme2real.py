@@ -118,7 +118,7 @@ def main():
     
     # Define arguments
     parser.add_argument("--labelme_dir", type=str, default="bags_processing/d435_images")
-    parser.add_argument("--output_dir", type=str, default="real_lifebuoy_dataset")
+    parser.add_argument("--output_dir", type=str, default="real_dataset")
     
     args = parser.parse_args()
 
@@ -139,6 +139,10 @@ def main():
     save_coco(val_data, f"{args.output_dir}/annotations/instances_val2024.json")
 
     os.makedirs(output_image_dir, exist_ok=True)
+    output_image_dir = f"{args.output_dir}/train2024"
+    copy_images(train_data['images'], [f"{args.output_dir}/images"], output_image_dir)
+    output_image_dir = f"{args.output_dir}/val2024"
+    copy_images(val_data['images'], [f"{args.output_dir}/images"], output_image_dir)
 
     os.system(f"cp bags_processing/classes.txt {args.output_dir}/annotations/classes.txt")
 
