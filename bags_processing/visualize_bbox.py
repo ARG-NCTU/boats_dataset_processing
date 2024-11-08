@@ -28,6 +28,9 @@ def draw_bboxes(image, annotations):
     return image
 
 def visualize_bboxes(image_dir, annotation_dir):
+    os.makedirs('Visualization', exist_ok=True)
+    output_dir = os.path.join('Visualization', image_dir.split('/')[-1])
+    os.makedirs(output_dir, exist_ok=True)
     # sort key is the json file name
     for filename in sorted(os.listdir(annotation_dir), key=lambda x: int(x.split('.')[0])):
         if filename.endswith('.json'):
@@ -43,8 +46,7 @@ def visualize_bboxes(image_dir, annotation_dir):
             image_with_bboxes = draw_bboxes(image, annotations)
 
             # Save the image with bboxes
-            os.makedirs('Visualization', exist_ok=True)
-            output_path = os.path.join('Visualization', annotations['imagePath'].split('/')[-1])
+            output_path = os.path.join(output_dir, annotations['imagePath'].split('/')[-1])
             cv2.imwrite(output_path, image_with_bboxes)
             
             # plt.figure(figsize=(10, 10))
@@ -55,11 +57,15 @@ def visualize_bboxes(image_dir, annotation_dir):
 
 def main(args):
     for sub_dir in os.listdir(args.root_dir):
+        sub_dir = os.path.join(args.root_dir, sub_dir)
         visualize_bboxes(sub_dir, sub_dir)
 
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser(description="Visualize bounding boxes on images")
-    parser.add_argument("root_dir", type=str, help="Directory containing images and LabelMe annotations")
+    parser.add_argument("--root_dir", type=str, default="d435_images", help="Directory containing images and LabelMe annotations")
     args = parser.parse_args()
     main(args)
+
+# Run the script
+# python3 visualize_bbox.py --root_dir ~/boats_dataset_processing/bags_processing/Kaohsiung_Port_dataset_labelme/d435_images
