@@ -89,3 +89,5 @@ if __name__ == "__main__":
     main(args)
 
 # python3 statistic_class_simple.py --classes Kaohsiung_Port_dataset/annotations/classes.txt --train_json Kaohsiung_Port_dataset/annotations/instances_train2024.json --val_json Kaohsiung_Port_dataset/annotations/instances_val2024.json
+# python3 statistic_class_simple.py --classes Boat_dataset_unity/Lifebuoy/classes.txt --train_json Lifebuoy_dataset/annotations/instances_train2024.json --val_json Lifebuoy_dataset/annotations/instances_val2024.json
+# python3 statistic_class_simple.py --classes Boat_dataset_unity/Lifebuoy/classes.txt --train_json real_lifebuoy_dataset/annotations/instances_train2024.json --val_json real_lifebuoy_dataset/annotations/instances_val2024.json
