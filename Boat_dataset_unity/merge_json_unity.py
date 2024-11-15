@@ -9,7 +9,7 @@ def sort_files(file):
 
 def load_classes():
     class_list = []
-    with open("~/boats_dataset_processing/classes.txt", "r") as f:
+    with open("Boats/classes.txt", "r") as f:
         class_list = [cname.strip() for cname in f.readlines()]
     return class_list
 
@@ -120,7 +120,7 @@ def merge_json_files(rgb_thermal='rgb', bbox_seg='bbox', boats_root_path='~/data
     # N >= 1, default N = 1
 
     # Load the mask ids json file to dictionary
-    with open("mask_ids.json", "r") as f:
+    with open("Boats/mask_ids.json", "r") as f:
         mask_ids = json.load(f)
     # print(mask_ids.keys())
     obscured_num = {cname: 0 for cname in class_list}
@@ -172,13 +172,15 @@ def merge_json_files(rgb_thermal='rgb', bbox_seg='bbox', boats_root_path='~/data
                     mask_img = cv2.imread(mask_path, cv2.IMREAD_GRAYSCALE)
                     mask = np.array(mask_img)
                     source_img = image.copy()
-                    for obj in data['objects']:
+                    # for obj in data['objects']:
+                    # Iterate through each class in the mask_ids for the current boats_dir
+                    for class_name, mask_id in mask_ids[boats_dir].items():
                         # if float(obj['visibility']) < 0.5:
                         #     continue
                         ##### code here #####
                         current_visible_area = float('inf')
                         if boats_dir in mask_ids.keys():
-                            mask_id = int(mask_ids[boats_dir][obj['class']])
+                            # mask_id = int(mask_ids[boats_dir][obj['class']])
                             current_obj_mask = np.where(mask == mask_id, 255, 0).astype(np.uint8)
                             # Chooose the largest connected component
                             contours, _ = cv2.findContours(current_obj_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
@@ -195,6 +197,7 @@ def merge_json_files(rgb_thermal='rgb', bbox_seg='bbox', boats_root_path='~/data
                                     polygon = []
                             # cv2.imwrite('mask.png', current_obj_mask)
                             # mask to bbox area: (xmax-xmin) * (ymax-ymin) 
+
                             x, y, w, h = cv2.boundingRect(current_obj_mask)
                             x, y, w, h = int(x), int(y), int(w), int(h)
                             current_visible_bbox = [x, y, w, h]
@@ -202,73 +205,78 @@ def merge_json_files(rgb_thermal='rgb', bbox_seg='bbox', boats_root_path='~/data
 
                         ##############################
 
-                        class_name = obj['class']
-                        if class_name in class_list:
-                            class_id = class_list.index(class_name)
-                            
-                            if bbox_seg in ['bbox', 'both']:
-                                point = obj['bounding_box']
-                                x1, y1 = point["top_left"]
-                                x2, y2 = point["bottom_right"]
-                                w, h = x2 - x1, y2 - y1
-                                bbox = [x1, y1, w, h]
-                                bbox = [round(x, 3) for x in bbox]
-                                bbox[0], bbox[1], bbox[2], bbox[3] = int(bbox[0]), int(bbox[1]), int(bbox[2]), int(bbox[3])
+                        # find the object in the json file
+                        obj = None
+                        for tmp_obj in data['objects']:
+                            if tmp_obj['class'] == class_name:
+                                obj = tmp_obj
+                                break
+                        
+                        obsured = False
+                        
+                        if obj is not None:
+
+                            class_name = obj['class']
+                            if class_name in class_list:
+                                class_id = class_list.index(class_name)
                                 
-                            
-                            if boat_count_per_scene > 100:
-                                count_on =  i % 100 == 0
-                            else:
-                                count_on = True
-                            
-                            if vis and count_on:
-                                # draw current_visible_bbox and bbox
                                 if bbox_seg in ['bbox', 'both']:
-                                    cv2.rectangle(source_img, (bbox[0], bbox[1]), (bbox[0]+bbox[2], bbox[1]+bbox[3]), (255, 0, 0), 2)
-                                if boats_dir in mask_ids.keys():
-                                    if current_visible_area < 0.3 * w * h:
-                                        # use pink color to draw the bbox
-                                        cv2.rectangle(source_img, (current_visible_bbox[0], current_visible_bbox[1]), (current_visible_bbox[0]+current_visible_bbox[2], current_visible_bbox[1]+current_visible_bbox[3]), (255, 0, 255), 2)
-                                    else:
-                                        # use red color to draw the bbox
-                                        cv2.rectangle(source_img, (current_visible_bbox[0], current_visible_bbox[1]), (current_visible_bbox[0]+current_visible_bbox[2], current_visible_bbox[1]+current_visible_bbox[3]), (0, 0, 255), 2)
-                                
-                                dir = os.path.join(vis_dir, boats_dir, scene_dir)
-                                os.makedirs(dir, exist_ok=True)
-                                vis_img_path = os.path.join(dir, f'{i}.png') if rgb_thermal == 'rgb' else os.path.join(dir, f'{i}_thermal.png')
-                                cv2.imwrite(vis_img_path, source_img)
+                                    point = obj['bounding_box']
+                                    x1, y1 = point["top_left"]
+                                    x2, y2 = point["bottom_right"]
+                                    w, h = x2 - x1, y2 - y1
+                                    bbox = [x1, y1, w, h]
+                                    bbox = [round(x, 3) for x in bbox]
+                                    bbox[0], bbox[1], bbox[2], bbox[3] = int(bbox[0]), int(bbox[1]), int(bbox[2]), int(bbox[3])
+                                    
+                                if current_visible_area < 0.3 * w * h:
+                                    obscured_num[obj['class']] += 1
+                                    obsured = True
 
-                            if current_visible_area < 0.3 * w * h:
-                                obscured_num[obj['class']] += 1
-                                continue
-                            
-
-
-                            area = w * h if boats_dir in mask_ids.keys() else current_visible_area
-                            anno = {
-                                "id": annotation_id,
-                                "image_id": image_id,
-                                "category_id": class_id,
-                                "area": area,
-                                "iscrowd": 0
-                            }
-
-                            if bbox_seg in ['bbox', 'both']:
-                                if boats_dir in mask_ids.keys():
-                                    anno["bbox"] = current_visible_bbox
+                        if boat_count_per_scene > 100:
+                            count_on =  i % 100 == 0
+                        else:
+                            count_on = True
+                        
+                        if vis and count_on:
+                            # draw current_visible_bbox and bbox
+                            if obj is not None:
+                                cv2.rectangle(source_img, (bbox[0], bbox[1]), (bbox[0]+bbox[2], bbox[1]+bbox[3]), (255, 0, 0), 2)
+                            if boats_dir in mask_ids.keys():
+                                if obsured:
+                                    # use pink color to draw the bbox
+                                    cv2.rectangle(source_img, (current_visible_bbox[0], current_visible_bbox[1]), (current_visible_bbox[0]+current_visible_bbox[2], current_visible_bbox[1]+current_visible_bbox[3]), (255, 0, 255), 2)
                                 else:
-                                    anno["bbox"] = bbox
+                                    # use red color to draw the bbox
+                                    cv2.rectangle(source_img, (current_visible_bbox[0], current_visible_bbox[1]), (current_visible_bbox[0]+current_visible_bbox[2], current_visible_bbox[1]+current_visible_bbox[3]), (0, 0, 255), 2)
                             
-                            if bbox_seg == 'both':
-                                if polygon:
-                                    anno["segmentation"] = [polygon]
-                                else:
-                                    anno["segmentation"] = [[]]
+                        dir = os.path.join(vis_dir, boats_dir, scene_dir)
+                        os.makedirs(dir, exist_ok=True)
+                        vis_img_path = os.path.join(dir, f'{i}.png') if rgb_thermal == 'rgb' else os.path.join(dir, f'{i}_thermal.png')
+                        cv2.imwrite(vis_img_path, source_img)
 
-                            # print(anno)
-                            annotations.append(anno)
+                        if obsured:
+                            continue
 
-                            annotation_id += 1
+                        anno = {
+                            "id": annotation_id,
+                            "image_id": image_id,
+                            "category_id": class_id,
+                            "area": current_visible_area,
+                            "iscrowd": 0,
+                            "bbox": current_visible_bbox,
+                        }
+                        
+                        if bbox_seg == 'both':
+                            if polygon:
+                                anno["segmentation"] = [polygon]
+                            else:
+                                anno["segmentation"] = [[]]
+
+                        # print(anno)
+                        annotations.append(anno)
+
+                        annotation_id += 1
 
                 image_id += 1
 
@@ -302,10 +310,10 @@ def merge_json_files(rgb_thermal='rgb', bbox_seg='bbox', boats_root_path='~/data
         "categories": [{"id": i, "name": name} for i, name in enumerate(class_list)]
     }     
 
-coco_formatted_rgb_data = merge_json_files(rgb_thermal='rgb', bbox_seg='bbox', boats_root_path='Images', boat_count_per_scene=502, vis=True, vis_dir='Visualization') # 3002
+coco_formatted_rgb_data = merge_json_files(rgb_thermal='rgb', bbox_seg='bbox', boats_root_path='Images', boat_count_per_scene=73, vis=True, vis_dir='Visualization') # 3002
 with open('coco_formatted_unity_rgb_data.json', 'w') as f:
     json.dump(coco_formatted_rgb_data, f, indent=4)
 
-coco_formatted_thermal_data = merge_json_files(rgb_thermal='thermal', bbox_seg='bbox', boats_root_path='Images', boat_count_per_scene=502, vis=True, vis_dir='Visualization') # 3002
+coco_formatted_thermal_data = merge_json_files(rgb_thermal='thermal', bbox_seg='bbox', boats_root_path='Images', boat_count_per_scene=73, vis=True, vis_dir='Visualization') # 3002
 with open('coco_formatted_unity_thermal_data.json', 'w') as f:
     json.dump(coco_formatted_thermal_data, f, indent=4)
