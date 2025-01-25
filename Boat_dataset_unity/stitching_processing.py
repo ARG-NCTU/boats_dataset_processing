@@ -6,8 +6,8 @@ from tqdm import tqdm
 # os.system("python stiching.py --input_dir Images/boats14-22/Scene1 --output_dir stiched_results/h1_h2")
 
 input_root = "Images"
-output_root = "stiched_results"
-suffixes = ["", "_depth", "_seg", "_thermal"]
+output_root = "stitched_results"
+suffixes = [None, "_depth", "_seg", "_thermal"]
 h1_path = "stitched_results/h1_h2/homography/H1_1.npy"
 h2_path = "stitched_results/h1_h2/homography/H2_1.npy"
 

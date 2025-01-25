@@ -20,7 +20,10 @@ class Setting():
     def load_images(self, start, end, suffix):
         images = []
         for i in range(start, end + 1):
-            img_path = os.path.join(self.input_dir, f"{i}{suffix}.png")
+            if args.suffix is None:
+                img_path = os.path.join(self.input_dir, f"{i}.png")
+            else:
+                img_path = os.path.join(self.input_dir, f"{i}{suffix}.png")
             if not os.path.exists(img_path):
                 break
             try:
@@ -43,7 +46,7 @@ class Setting():
 
         return left, mid, right
 
-    def file_setting(self, start, end, suffix=""):
+    def file_setting(self, start, end, suffix=None):
         all_images = self.load_images(start, end, suffix=suffix)
 
         if not all_images:
@@ -232,7 +235,7 @@ def create_video_from_images(images_dir, video_path, fps=30):
 def process_in_batches(batch_size, total_images, setting, intermediate_dir, homography_dir, args, stitcher):
     for batch_start in tqdm(range(0, total_images, batch_size), desc="Processing batches", leave=False):
         batch_end = min(batch_start + batch_size, total_images)
-        print(f"Processing batch {batch_start + 1} to {batch_end}")
+        # print(f"Processing batch {batch_start + 1} to {batch_end}")
 
         left_images, base_images, right_images, output_images_dir = setting.file_setting(batch_start + 1, batch_end, args.suffix)
 
@@ -276,8 +279,11 @@ def process_in_batches(batch_size, total_images, setting, intermediate_dir, homo
                 if final_image is None:
                     print(f"Skipping final stitching for image set {batch_start + i + 1}.")
                     continue
-
-                final_path = os.path.join(output_images_dir, f"{batch_start + i + 1}{args.suffix}.png")
+                
+                if args.suffix is None:
+                    final_path = os.path.join(output_images_dir, f"{batch_start + i + 1}.png")
+                else:
+                    final_path = os.path.join(output_images_dir, f"{batch_start + i + 1}{args.suffix}.png")
                 cv2.imwrite(final_path, final_image)
 
             except Exception as e:
@@ -310,7 +316,7 @@ def main(args):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="Stitch images from left, mid, and right folders.")
     parser.add_argument('--input_dir', type=str, default="Images/boats1-13/Scene1", help="Directory for input images")
-    parser.add_argument('--suffix', type=str, default="", help="Suffix of input images")
+    parser.add_argument('--suffix', type=str, default=None, help="Suffix of input images")
     parser.add_argument('--output_dir', type=str, default="stitched_images/boats1-13/Scene1", help="Output directory for images, video, and homographies")
     parser.add_argument('--h1_path', type=str, default=None, help="Path to save H1 homography matrix")
     parser.add_argument('--h2_path', type=str, default=None, help="Path to save H2 homography matrix")
