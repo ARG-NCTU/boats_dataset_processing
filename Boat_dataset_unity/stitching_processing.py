@@ -19,6 +19,6 @@ for boat_folder in tqdm(sorted(os.listdir(input_root)), desc="Boat Folder", leav
         os.makedirs(os.path.join(output_root, boat_folder, scene_folder), exist_ok=True)
         output_path = os.path.join(output_root, boat_folder, scene_folder)
         for suffix in tqdm(suffixes, desc="Suffix", leave=False):
-            os.system(f"python3 stiching.py --input_dir {scene_folder_path} --suffix {suffix} --output_dir {output_path} --h1_path {h1_path} --h2_path {h2_path}")
+            os.system(f"python3 Stitcher.py --input_dir {scene_folder_path} --suffix {suffix} --output_dir {output_path} --h1_path {h1_path} --h2_path {h2_path}")
         
         
