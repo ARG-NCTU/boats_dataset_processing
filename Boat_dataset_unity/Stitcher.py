@@ -173,8 +173,8 @@ class Stitcher():
                 if save_H_path is not None and H is not None:
                     np.save(save_H_path, H)
                     # print(f"Homography matrix saved at {save_H_path}")
-            else:
-                print("Using provided homography matrix.")
+            # else:
+            #     print("Using provided homography matrix.")
 
             # print('Warping Images...')
             warping_start = time.time()
