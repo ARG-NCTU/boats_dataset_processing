@@ -17,7 +17,7 @@ class Setting():
         if not os.path.isdir(path):
             os.makedirs(path)
 
-    def load_images(self, start, end, suffix=""):
+    def load_images(self, start, end, suffix):
         images = []
         for i in range(start, end + 1):
             img_path = os.path.join(self.input_dir, f"{i}{suffix}.png")
@@ -43,8 +43,8 @@ class Setting():
 
         return left, mid, right
 
-    def file_setting(self, start, end):
-        all_images = self.load_images(start, end)
+    def file_setting(self, start, end, suffix=""):
+        all_images = self.load_images(start, end, suffix=suffix)
 
         if not all_images:
             print(f"No valid images loaded for batch {start} to {end}.")
