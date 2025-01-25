@@ -46,16 +46,21 @@ Lifebuoy_underwater_dataset_hf/
 Kaohsiung_Port_dataset/
 Kaohsiung_Port_dataset_hf/
 
+Tainan_Lifebuoy_dataset/
+
 stitching/stitched_images
 
 videos_processing/detr_output_videos/
 videos_processing/source_video/
 videos_processing/stitched_videos_accelerated/
 videos_processing/video/
+videos_processing/detr_images/
 
 bags_processing/acc_output_videos/
 bags_processing/backup/
 bags_processing/backup2/
+bags_processing/Tainan_backup/
+bags_processing/Tainan_backup_clip1/
 bags_processing/d435_bags/
 bags_processing/d435_images/
 bags_processing/d435_videos/
@@ -65,3 +70,5 @@ bags_processing/Kaohsiung_Port_dataset_labelme/
 
 __pycache__/
 .vscode/
+
+Boat_dataset_unity/stitched_images/

@@ -185,7 +185,7 @@ cd ~/huggingface-notebooks/transformers_doc/en/pytorch
 Download HuggingFace dataset:
 ```bash
 huggingface-cli login
-huggingface-cli download ARG-NCTU/Boat_dataset_2024 --repo-type dataset --local-dir ~/huggingface-notebooks/transformers_doc/en/pytorch
+huggingface-cli download ARG-NCTU/Boat_dataset_2024 data --repo-type dataset --local-dir ~/huggingface-notebooks/transformers_doc/en/pytorch
 huggingface-cli download ARG-NCTU/Boat_dataset_2024 data/classes.txt --repo-type dataset --local-dir ~/huggingface-notebooks/transformers_doc/en/pytorch
 huggingface-cli download ARG-NCTU/Boat_dataset_2024 data/images.zip --repo-type dataset --local-dir ~/huggingface-notebooks/transformers_doc/en/pytorch
 ```

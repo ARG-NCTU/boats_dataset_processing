@@ -19,6 +19,80 @@ def load_classes():
 
 class_list = load_classes()
 
+# def labelme2real(labelme_dir, output_image_dir):
+
+#     coco_data = {
+#         "images": [],
+#         "annotations": [],
+#         "categories": [{"id": i, "name": cname} for i, cname in enumerate(class_list)]
+#     }
+
+#     image_id = 1
+#     annotation_id = 1
+
+#     for labelme_file in tqdm(os.listdir(labelme_dir), desc="Converting labelme to coco", leave=False):
+#         if labelme_file.endswith(".json"):
+#             with open(os.path.join(labelme_dir, labelme_file)) as f:
+#                 data = json.load(f)
+            
+#             ############ image ############
+#             image_name = labelme_file.replace(".json", ".png")
+#             dir_name = labelme_dir.split("/")[-1]  
+#             out_image_name = f"{dir_name}_{image_name}"
+#             image = cv2.imread(os.path.join(labelme_dir, image_name))
+#             height, width = image.shape[:2]
+#             image_info = {
+#                 "id": image_id,
+#                 "file_name": out_image_name,
+#                 "width": width,
+#                 "height": height
+#             }
+#             coco_data["images"].append(image_info)
+
+#             # copy image to output_dir
+#             cv2.imwrite(os.path.join(output_image_dir, out_image_name), image)
+            
+#             ############ annotations ############
+            
+#             # Convert labelme format to coco format
+#             for shape in data["shapes"]:
+#                 points = shape["points"]
+#                 label = shape["label"]
+#                 x1, y1 = points[0]
+#                 x1, y1 = int(round(x1)), int(round(y1))
+#                 x2, y2 = points[1]
+#                 x2, y2 = int(round(x2)), int(round(y2))
+#                 if x1 > x2:
+#                     x1, x2 = x2, x1
+#                 if y1 > y2:
+#                     y1, y2 = y2, y1
+#                 w = x2 - x1
+#                 h = y2 - y1
+#                 if x1 < 0 or y1 < 0 or w <= 0 or h <= 0 or x2 > width or y2 > height:
+#                     print("====================================")
+#                     print(f"Invalid json file {labelme_file}, bbox: {x1, y1, x2, y2}")
+#                     print("====================================")
+#                     continue
+#                 area = w * h
+#                 bbox = [x1, y1, w, h]
+#                 category_id = class_list.index(label)
+#                 annotation = {
+#                     "id": annotation_id,
+#                     "image_id": image_id,
+#                     "category_id": category_id,
+#                     "bbox": bbox,
+#                     "area": area,
+#                     "iscrowd": 0
+#                 }
+
+#                 coco_data["annotations"].append(annotation)
+#                 annotation_id += 1
+
+#             image_id += 1
+
+#     print(f"Converted {labelme_dir} to coco format")
+#     return coco_data
+
 def labelme2real(labelme_dir, output_image_dir):
 
     coco_data = {
@@ -30,16 +104,19 @@ def labelme2real(labelme_dir, output_image_dir):
     image_id = 1
     annotation_id = 1
 
-    for labelme_file in tqdm(os.listdir(labelme_dir), desc="Converting labelme to coco", leave=False):
-        if labelme_file.endswith(".json"):
-            with open(os.path.join(labelme_dir, labelme_file)) as f:
-                data = json.load(f)
-            
-            ############ image ############
-            image_name = labelme_file.replace(".json", ".png")
-            dir_name = labelme_dir.split("/")[-1]  
+    for file_name in tqdm(os.listdir(labelme_dir), desc="Converting labelme to coco", leave=False):
+        if file_name.endswith(".png"):  # Check all PNG files
+            image_name = file_name
+            dir_name = labelme_dir.split("/")[-1]
             out_image_name = f"{dir_name}_{image_name}"
-            image = cv2.imread(os.path.join(labelme_dir, image_name))
+            image_path = os.path.join(labelme_dir, image_name)
+            
+            # Read the image
+            image = cv2.imread(image_path)
+            if image is None:
+                print(f"Skipping invalid image {image_path}")
+                continue
+
             height, width = image.shape[:2]
             image_info = {
                 "id": image_id,
@@ -49,49 +126,58 @@ def labelme2real(labelme_dir, output_image_dir):
             }
             coco_data["images"].append(image_info)
 
-            # copy image to output_dir
+            # Copy image to output directory
             cv2.imwrite(os.path.join(output_image_dir, out_image_name), image)
             
-            ############ annotations ############
+            # Check if JSON file exists
+            json_file = file_name.replace(".png", ".json")
+            json_path = os.path.join(labelme_dir, json_file)
+            if os.path.exists(json_path):
+                with open(json_path) as f:
+                    data = json.load(f)
+
+                # Process annotations
+                for shape in data["shapes"]:
+                    points = shape["points"]
+                    label = shape["label"]
+                    x1, y1 = points[0]
+                    x1, y1 = int(round(x1)), int(round(y1))
+                    x2, y2 = points[1]
+                    x2, y2 = int(round(x2)), int(round(y2))
+                    if x1 > x2:
+                        x1, x2 = x2, x1
+                    if y1 > y2:
+                        y1, y2 = y2, y1
+                    w = x2 - x1
+                    h = y2 - y1
+                    if x1 < 0 or y1 < 0 or w <= 0 or h <= 0 or x2 > width or y2 > height:
+                        print("====================================")
+                        print(f"Invalid json file {json_file}, bbox: {x1, y1, x2, y2}")
+                        print("====================================")
+                        continue
+                    area = w * h
+                    bbox = [x1, y1, w, h]
+                    category_id = class_list.index(label)
+                    annotation = {
+                        "id": annotation_id,
+                        "image_id": image_id,
+                        "category_id": category_id,
+                        "bbox": bbox,
+                        "area": area,
+                        "iscrowd": 0
+                    }
+
+                    coco_data["annotations"].append(annotation)
+                    annotation_id += 1
+            else:
+                # Add empty annotations for images without JSON
+                print(f"No annotations for {image_name}. Adding empty annotations.")
             
-            # Convert labelme format to coco format
-            for shape in data["shapes"]:
-                points = shape["points"]
-                label = shape["label"]
-                x1, y1 = points[0]
-                x1, y1 = int(round(x1)), int(round(y1))
-                x2, y2 = points[1]
-                x2, y2 = int(round(x2)), int(round(y2))
-                if x1 > x2:
-                    x1, x2 = x2, x1
-                if y1 > y2:
-                    y1, y2 = y2, y1
-                w = x2 - x1
-                h = y2 - y1
-                if x1 < 0 or y1 < 0 or w <= 0 or h <= 0 or x2 > width or y2 > height:
-                    print("====================================")
-                    print(f"Invalid json file {labelme_file}, bbox: {x1, y1, x2, y2}")
-                    print("====================================")
-                    continue
-                area = w * h
-                bbox = [x1, y1, w, h]
-                category_id = class_list.index(label)
-                annotation = {
-                    "id": annotation_id,
-                    "image_id": image_id,
-                    "category_id": category_id,
-                    "bbox": bbox,
-                    "area": area,
-                    "iscrowd": 0
-                }
-
-                coco_data["annotations"].append(annotation)
-                annotation_id += 1
-
             image_id += 1
 
     print(f"Converted {labelme_dir} to coco format")
     return coco_data
+
 
 def merge_coco(coco_data_list):
     merged_data = coco_data_list[0]
@@ -119,6 +205,7 @@ def main():
     # Define arguments
     parser.add_argument("--labelme_dir", type=str, default="bags_processing/d435_images")
     parser.add_argument("--output_dir", type=str, default="real_dataset")
+    parser.add_argument("--classes", type=str, default="Boat_dataset_unity/Lifebuoy/classes.txt")
     
     args = parser.parse_args()
 
@@ -150,3 +237,4 @@ if __name__ == "__main__":
     main()
 
 # python3 labelme2real.py --labelme_dir bags_processing/d435_images --output_dir Kaohsiung_Port_dataset
+# python3 labelme2real.py --labelme_dir bags_processing/label --output_dir Tainan_Lifebuoy_dataset

@@ -126,4 +126,6 @@ if __name__ == "__main__":
 # 1 camera, 5.0x acceleration rate, uncompressed images
 # python3 extract_bags.py --bag_dir d435_bags --output_image_dir d435_images --output_video_dir d435_videos --accelerate_rate 5.0 --topic /camera1/color/image_raw --output_names _mid
 
+# python3 extract_bags.py --bag_dir d435_bags --output_image_dir d435_images --output_video_dir d435_videos --accelerate_rate 1.0 --topic /detr_object_detection/detection_result_img/camera_stitched/compressed --output_names _detr --compressed
+
 

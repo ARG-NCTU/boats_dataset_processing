@@ -35,3 +35,4 @@ if __name__ == "__main__":
     main(args)
 
 # python3 png2mp4.py --images_dir ~/boats_dataset_processing/stitching/stitched_images/images --video_path stitched_videos_accelerated/2024-11-01-14-33-57_stitched_result.mp4
+# python3 png2mp4.py --images_dir ~/boats_dataset_processing/videos_processing/detr_images --video_path detr_output_videos/Tainan_detr_clip1.mp4 --fps 2

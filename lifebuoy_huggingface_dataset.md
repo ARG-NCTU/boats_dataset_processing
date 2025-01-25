@@ -182,3 +182,15 @@ huggingface-cli upload ARG-NCTU/Lifebuoy_underwater_dataset_2024 ./1107_kaohsiun
 huggingface-cli upload ARG-NCTU/Kaohsiung_Port_dataset_2024 ./1107_kaohsiung_port2_out.mp4 ./video/1107_kaohsiung_port2_out.mp4 --repo-type=dataset --commit-message="Upload testing video to hub"
 
 ```
+
+```bash
+huggingface-cli login
+cd ~/boats_dataset_processing/JetSeaAIBoat/
+huggingface-cli upload JetSea-AI/JetSeaAIBoat ./images/20241212_120307 ./images/20241212_120307 --repo-type=dataset --commit-message="Upload images to hub"
+
+huggingface-cli upload JetSea-AI/JetSeaAIBoat ./images/20241212_123729 ./images/20241212_123729 --repo-type=dataset --commit-message="Upload images to hub"
+
+huggingface-cli upload JetSea-AI/JetSeaAIBoat ./images/20241212_130904 ./images/20241212_130904 --repo-type=dataset --commit-message="Upload images to hub"
+
+huggingface-cli upload JetSea-AI/JetSeaAIBoat ./images/20241212_163302 ./images/20241212_163302 --repo-type=dataset --commit-message="Upload images to hub"
+```
