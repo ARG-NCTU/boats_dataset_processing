@@ -11,10 +11,10 @@ suffixes = ["", "_depth", "_seg", "_thermal"]
 h1_path = "stitched_results/h1_h2/homography/H1_1.npy"
 h2_path = "stitched_results/h1_h2/homography/H2_1.npy"
 
-for boat_folder in tqdm(os.listdir(sorted(input_root)), desc="Boat Folder", leave=False):
+for boat_folder in tqdm(sorted(os.listdir(input_root)), desc="Boat Folder", leave=False):
     boat_folder_path = os.path.join(input_root, boat_folder)
     os.makedirs(os.path.join(output_root, boat_folder), exist_ok=True)
-    for scene_folder in tqdm(os.listdir(sorted(boat_folder_path)), desc="Scene Folder", leave=False):
+    for scene_folder in tqdm(sorted(os.listdir(boat_folder_path)), desc="Scene Folder", leave=False):
         scene_folder_path = os.path.join(boat_folder_path, scene_folder)
         os.makedirs(os.path.join(output_root, boat_folder, scene_folder), exist_ok=True)
         output_path = os.path.join(output_root, boat_folder, scene_folder)
