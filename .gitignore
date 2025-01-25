@@ -48,8 +48,6 @@ Kaohsiung_Port_dataset_hf/
 
 Tainan_Lifebuoy_dataset/
 
-stitching/stitched_images
-
 videos_processing/detr_output_videos/
 videos_processing/source_video/
 videos_processing/stitched_videos_accelerated/
@@ -71,4 +69,4 @@ bags_processing/Kaohsiung_Port_dataset_labelme/
 __pycache__/
 .vscode/
 
-Boat_dataset_unity/stitched_images/
+Boat_dataset_unity/stitched_results/

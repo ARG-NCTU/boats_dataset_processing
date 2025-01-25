@@ -17,10 +17,10 @@ class Setting():
         if not os.path.isdir(path):
             os.makedirs(path)
 
-    def load_images(self, start, end):
+    def load_images(self, start, end, suffix=""):
         images = []
         for i in range(start, end + 1):
-            img_path = os.path.join(self.input_dir, f"{i}.png")
+            img_path = os.path.join(self.input_dir, f"{i}{suffix}.png")
             if not os.path.exists(img_path):
                 break
             try:
@@ -60,7 +60,10 @@ class Setting():
             except Exception as e:
                 print(f"Error processing image {start + idx}: {e}")
 
-        output_images_dir = os.path.join(self.output_dir, 'images')
+        if args.h1_path is None:
+            output_images_dir = os.path.join(self.output_dir, 'images')
+        else:
+            output_images_dir = self.output_dir
         self.check_and_make_dir(output_images_dir)
 
         return left_images, mid_images, right_images, output_images_dir
@@ -231,7 +234,7 @@ def process_in_batches(batch_size, total_images, setting, intermediate_dir, homo
         batch_end = min(batch_start + batch_size, total_images)
         print(f"Processing batch {batch_start + 1} to {batch_end}")
 
-        left_images, base_images, right_images, output_images_dir = setting.file_setting(batch_start + 1, batch_end)
+        left_images, base_images, right_images, output_images_dir = setting.file_setting(batch_start + 1, batch_end, args.suffix)
 
         num_images = min(len(left_images), len(base_images), len(right_images))
         if num_images == 0:
@@ -240,10 +243,10 @@ def process_in_batches(batch_size, total_images, setting, intermediate_dir, homo
 
         for i in range(num_images):
             try:
-                print(f"Processing image set {batch_start + i + 1}: "
-                      f"Left({left_images[i].shape}), "
-                      f"Base({base_images[i].shape}), "
-                      f"Right({right_images[i].shape})")
+                # print(f"Processing image set {batch_start + i + 1}: "
+                #       f"Left({left_images[i].shape}), "
+                #       f"Base({base_images[i].shape}), "
+                #       f"Right({right_images[i].shape})")
 
                 H1 = np.load(args.h1_path) if args.h1_path and os.path.exists(args.h1_path) else None
                 H2 = np.load(args.h2_path) if args.h2_path and os.path.exists(args.h2_path) else None
@@ -260,7 +263,8 @@ def process_in_batches(batch_size, total_images, setting, intermediate_dir, homo
                     continue
 
                 intermediate_path = os.path.join(intermediate_dir, f"{batch_start + i + 1}.png")
-                cv2.imwrite(intermediate_path, LM_img)
+                if args.h1_path is None:
+                    cv2.imwrite(intermediate_path, LM_img)
 
                 img_left = LM_img
                 img_right = right_images[i]
@@ -273,7 +277,7 @@ def process_in_batches(batch_size, total_images, setting, intermediate_dir, homo
                     print(f"Skipping final stitching for image set {batch_start + i + 1}.")
                     continue
 
-                final_path = os.path.join(output_images_dir, f"{batch_start + i + 1}.png")
+                final_path = os.path.join(output_images_dir, f"{batch_start + i + 1}{args.suffix}.png")
                 cv2.imwrite(final_path, final_image)
 
             except Exception as e:
@@ -290,14 +294,15 @@ def main(args):
 
     intermediate_dir = os.path.join(args.output_dir, 'intermediate')
     homography_dir = os.path.join(args.output_dir, 'homography')
-    os.makedirs(intermediate_dir, exist_ok=True)
-    os.makedirs(homography_dir, exist_ok=True)
+    if args.h1_path is None:
+        os.makedirs(intermediate_dir, exist_ok=True)
+        os.makedirs(homography_dir, exist_ok=True)
     
     batch_size = 5
     process_in_batches(batch_size, total_images, setting, intermediate_dir, homography_dir, args, stitcher)
     
     # Create video from stitched images
-    if True:
+    if args.h1_path is None:
         video_path = os.path.join(args.output_dir, 'video', 'stitched_result.mp4')
         os.makedirs(os.path.dirname(video_path), exist_ok=True)
         create_video_from_images(os.path.join(args.output_dir, 'images'), video_path, fps=30)
@@ -305,11 +310,12 @@ def main(args):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="Stitch images from left, mid, and right folders.")
     parser.add_argument('--input_dir', type=str, default="Images/boats1-13/Scene1", help="Directory for input images")
-    parser.add_argument('--output_dir', type=str, default="stitched_images", help="Output directory for images, video, and homographies")
+    parser.add_argument('--suffix', type=str, default="", help="Suffix of input images")
+    parser.add_argument('--output_dir', type=str, default="stitched_images/boats1-13/Scene1", help="Output directory for images, video, and homographies")
     parser.add_argument('--h1_path', type=str, default=None, help="Path to save H1 homography matrix")
     parser.add_argument('--h2_path', type=str, default=None, help="Path to save H2 homography matrix")
     args = parser.parse_args()
     main(args)
 
-# python3 Stitcher.py
+# python3 Stitcher.py --input_dir Images/boats1-13/Scene1 --output_dir stiched_results/h1_h2
 
