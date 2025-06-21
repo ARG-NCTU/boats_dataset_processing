@@ -1,5 +1,4 @@
 # Boats Dataset Processing
-This repo is used for converting Robotx2022-Unity-dataset format to COCO format, and further to HugingFace dataset format.
 
 ## Setup
 Clone this repo:
@@ -20,6 +19,11 @@ source cpu_run.sh
 For Second or more terminal to enter Docker environment:
 ```bash
 source cpu_join.sh
+```
+
+Clean all ros1 packages
+```bash
+source clean_ros1_all.sh
 ```
 
 Build all ros1 packages
@@ -139,7 +143,7 @@ python3 visualize_coco.py \
 --output_dir Ball_dataset/Visualization
 ```
 
-Append Dataset
+Extend Dataset
 ```bash
 python3 merge_coco.py \
 --dataset1 TW_Marine_2cls_dataset \
@@ -155,7 +159,7 @@ python3 coco2parquet.py \
 --output_dir TW_Marine_5cls_dataset_hf/annotations
 ```
 
-Add TW_Marine_5cls_dataset/annotations/classes.txt file and edit this like:
+Add TW_Marine_5cls_dataset/annotations/classes.txt file and edit this file like:
 ```bash
 Buoy
 GuardBoat
@@ -165,8 +169,9 @@ GreenBall
 ```
 
 Upload HuggingFace dataset
+
+<img src="example/huggingface-dataset-example.png" alt="huggingface dataset example" width="600" height="auto" />
+
 ```bash
 source upload_hf.sh ARG-NCTU/TW_Marine_5cls_dataset ARG-NCTU/TW_Marine_5cls_dataset_coco TW_Marine_5cls_dataset TW_Marine_5cls_dataset_hf
 ```
-
-![huggingface dataset example](example/huggingface-dataset-example.png)
