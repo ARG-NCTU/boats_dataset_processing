@@ -1,0 +1,4 @@
+/camera1/color/image_raw/compressed
+/camera2/color/image_raw/compressed
+/camera3/color/image_raw/compressed
+/camera4/color/image_raw/compressed

@@ -1,0 +1,11 @@
+<launch>
+    <arg name="sub_camera_topic" value="/camera_pano_stitched/image_raw/compressed"/>
+    <arg name="fps" value="18"/>
+    <arg name="output_fps" value="2"/>
+
+    <node pkg="image_processing" type="save_images.py" name="save_images" output="screen">
+        <param name="sub_camera_topic" value="$(arg sub_camera_topic)"/>
+        <param name="fps" value="$(arg fps)"/>
+        <param name="output_fps" value="$(arg output_fps)"/>
+    </node>
+</launch>

@@ -1,5 +1,5 @@
 source /opt/ros/noetic/setup.bash
-# source $HOME/moos-dawg-2024/catkin_ws/devel/setup.bash
+source $HOME/boats_dataset_processing/ros1_ws/devel/setup.bash
 
 if [ $# -gt 0 ]; then
 	export ROS_MASTER_IP=$1

@@ -38,6 +38,7 @@ RUN apt-get -o Acquire::ForceIPv4=true update && apt-get -yq dist-upgrade \
     gedit \
     wget \
     sudo \
+    zip \
     lsb-release \
     build-essential \
     net-tools \

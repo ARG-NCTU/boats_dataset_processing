@@ -36,6 +36,7 @@ RUN apt-get -o Acquire::ForceIPv4=true update && apt-get -yq dist-upgrade \
     gedit \
     wget \
     sudo \
+    zip \
     lsb-release \
     build-essential \
     net-tools \
@@ -116,12 +117,10 @@ RUN pip3 install transformers \
 ##################################### labelme #####################################
 RUN pip install labelme==4.5.13
 
-##################################### zip #####################################
+###################################### ros-foxglove-bridge ####################################
 
-RUN apt-get -o Acquire::ForceIPv4=true update && apt-get -yq dist-upgrade \
-    && apt-get -o Acquire::ForceIPv4=true install -yq --no-install-recommends \ 
-    zip \
-    && apt-get clean \
+RUN sudo apt-get update && sudo apt-get install -y --no-install-recommends \
+    ros-$ROS_DISTRO-foxglove-bridge \
     && rm -rf /var/lib/apt/lists/*
 
 ##################################### setting ###################################################

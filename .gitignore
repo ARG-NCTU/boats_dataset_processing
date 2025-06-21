@@ -74,3 +74,11 @@ Boat_dataset_unity/stitched_results/
 ks_buoy_labels_images/
 KS_Buoy_dataset/
 KS_Buoy_dataset_hf/
+
+.catkin_tools/
+build/
+devel/
+logs/
+
+output/
+bags/

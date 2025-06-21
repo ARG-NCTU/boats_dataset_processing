@@ -22,9 +22,14 @@ For Second or more terminal to enter Docker environment:
 source cpu_join.sh
 ```
 
+Build all ros1 packages
+```bash
+source build_ros1_all.sh
+```
+
 ## Usage
 
-### Extract ROS Bag
+### Extract ROS Bag (if stitched image in bag)
 
 ```bash
 cd ~/boats_dataset_processing/bags_processing
@@ -42,16 +47,51 @@ python3 extract_bags.py \
 --compressed
 ```
 
-Another example usage: 3 cameras, 5.0x acceleration rate, compressed images
+### Play ROS Bag and Save images (if stitched image NOT in bag)
+
+#### Terminal 1: ROSCORE
+
 ```bash
-python3 extract_bags.py \
---bag_dir bags \
---output_image_dir images \
---output_video_dir videos \
---accelerate_rate 5.0 \
---topic /camera1_fix/color/image_raw/compressed /camera2_fix/color/image_raw/compressed /camera3_fix/color/image_raw/compressed \
---output_names _left _mid _right \
---compressed
+cd ~/boats_dataset_processing
+source cpu_run.sh
+source environment.sh
+roscore
+```
+
+#### Terminal 2: Play bag
+
+```bash
+cd ~/boats_dataset_processing
+source cpu_join.sh
+source environment.sh
+source rosbag/play_bag_dir.sh $HOME/boats_dataset_processing/bags/0610_JS5 $HOME/boats_dataset_processing/config/topics-raw-camera.txt
+```
+
+#### Terminal 3: Stitching
+
+First Setup
+```bash
+git clone git@github.com:JetSeaAI/opencv-cuda-docker.git
+cd ~/opencv-cuda-docker
+source docker_build.sh
+exit
+```
+
+Launch cylindrical stitching
+```bash
+cd ~/opencv-cuda-docker
+source docker_run.sh
+source environment.sh 127.0.0.1 127.0.0.1
+roslaunch cylindrical_processing cylindrical_stitching_JS5.launch
+```
+
+#### Terminal 4: Save Images
+
+```bash
+cd ~/boats_dataset_processing
+source cpu_join.sh
+source environment.sh
+roslaunch image_processing save_images.launch
 ```
 
 ### Labelme
@@ -128,3 +168,5 @@ Upload HuggingFace dataset
 ```bash
 source upload_hf.sh ARG-NCTU/TW_Marine_5cls_dataset ARG-NCTU/TW_Marine_5cls_dataset_coco TW_Marine_5cls_dataset TW_Marine_5cls_dataset_hf
 ```
+
+![huggingface dataset example](example/huggingface-dataset-example.png)
