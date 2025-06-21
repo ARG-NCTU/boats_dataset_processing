@@ -75,7 +75,7 @@ source rosbag/play_bag_dir.sh $HOME/boats_dataset_processing/bags/0610_JS5 $HOME
 
 First Setup
 ```bash
-git clone git@github.com:JetSeaAI/opencv-cuda-docker.git
+cd ~/ && git clone git@github.com:JetSeaAI/opencv-cuda-docker.git
 cd ~/opencv-cuda-docker
 source docker_build.sh
 exit
@@ -102,7 +102,7 @@ roslaunch image_processing save_images.launch
 
 Use Labelme tools to label images
 
-<img src="example/labelme.gif" alt="labelme" width="600" height="auto" />
+![labelme](example/labelme.gif)
 
 ```bash
 labelme
@@ -170,7 +170,7 @@ GreenBall
 
 Upload HuggingFace dataset
 
-<img src="example/huggingface-dataset-example.png" alt="huggingface dataset example" width="600" height="auto" />
+<img src="example/huggingface-dataset-example.png" alt="huggingface dataset example" width="800" height="auto" />
 
 ```bash
 source upload_hf.sh ARG-NCTU/TW_Marine_5cls_dataset ARG-NCTU/TW_Marine_5cls_dataset_coco TW_Marine_5cls_dataset TW_Marine_5cls_dataset_hf
