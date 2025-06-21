@@ -12,9 +12,14 @@ Enter this repo:
 cd ~/boats_dataset_processing
 ```
 
-Enter / Pull Docker environment:
+For first terminal to enter Docker environment:
 ```bash
 source cpu_run.sh
+```
+
+For Second or more terminal to enter Docker environment:
+```bash
+source cpu_join.sh
 ```
 
 ## Usage
@@ -50,6 +55,10 @@ python3 extract_bags.py \
 ```
 
 ### Labelme
+
+Use Labelme tools to label images
+
+<img src="example/labelme.gif" alt="labelme" width="600" height="auto" />
 
 ```bash
 labelme

@@ -114,7 +114,7 @@ RUN pip3 install transformers \
     albumentations
 
 ##################################### labelme #####################################
-RUN pip3 install labelme
+RUN pip install labelme==4.5.13
 
 ##################################### zip #####################################
 
