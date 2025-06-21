@@ -77,6 +77,13 @@ if __name__ == "__main__":
     main()
 
 # Example usage:
-# python visualize_coco.py --coco_json Tainan_Lifebuoy_dataset/annotations/instances_train2024.json --image_dir Tainan_Lifebuoy_dataset/train2024 --output_dir Tainan_Lifebuoy_dataset/Visualization
-# python visualize_coco.py --coco_json Tainan_Lifebuoy_dataset/annotations/instances_val2024.json --image_dir Tainan_Lifebuoy_dataset/val2024 --output_dir Tainan_Lifebuoy_dataset/Visualization
+# python3 visualize_coco.py --coco_json Tainan_Lifebuoy_dataset/annotations/instances_train2024.json --image_dir Tainan_Lifebuoy_dataset/train2024 --output_dir Tainan_Lifebuoy_dataset/Visualization
+# python3 visualize_coco.py --coco_json Tainan_Lifebuoy_dataset/annotations/instances_val2024.json --image_dir Tainan_Lifebuoy_dataset/val2024 --output_dir Tainan_Lifebuoy_dataset/Visualization
+# python3 visualize_coco.py --coco_json KS_buoy_dataset/annotations/instances_train2024.json --image_dir KS_buoy_dataset/train2024 --output_dir KS_buoy_dataset/Visualization
+# python3 visualize_coco.py --coco_json KS_buoy_dataset/annotations/instances_val2024.json --image_dir KS_buoy_dataset/val2024 --output_dir KS_buoy_dataset/Visualization
 
+
+# python3 visualize_coco.py --coco_json Kaohsiung_Port_dataset/annotations/instances_train2024.json --image_dir Kaohsiung_Port_dataset/train2024 --output_dir Kaohsiung_Port_dataset/Visualization
+# python3 visualize_coco.py --coco_json Kaohsiung_Port_dataset/annotations/instances_val2024.json --image_dir Kaohsiung_Port_dataset/val2024 --output_dir Kaohsiung_Port_dataset/Visualization
+
+# python3 visualize_coco.py --coco_json KS_Buoy_dataset/annotations/instances_train2024.json --image_dir KS_Buoy_dataset/train2024 --output_dir KS_Buoy_dataset/Visualization

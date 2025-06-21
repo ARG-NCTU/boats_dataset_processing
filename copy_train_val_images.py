@@ -32,3 +32,5 @@ if __name__ == '__main__':
 # Usage:
 # python3 copy_train_val_images.py --dir real_lifebuoy_dataset
 # python3 copy_train_val_images.py --dir Lifebuoy_dataset
+# python3 copy_train_val_images.py --dir KS_buoy_dataset
+# python3 copy_train_val_images.py --dir TW_Marine_2cls_dataset

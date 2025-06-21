@@ -5,14 +5,6 @@ import numpy as np
 
 import matplotlib.pyplot as plt
 
-# Define colors for each class
-COLORS = {
-    'Civilian_ship': (0, 0, 255),  # Red
-    'Buoy': (57, 255, 20),         # Neon Green
-    'Warship': (0, 0, 0),          # Black
-    'Coast_guard': (255, 0, 0)     # Blue
-}
-
 def load_labelme_annotation(json_file):
     with open(json_file, 'r') as f:
         data = json.load(f)
@@ -23,7 +15,7 @@ def draw_bboxes(image, annotations):
         points = shape['points']
         points = np.array(points, dtype=np.int32)
         # Draw the bounding box with the corresponding color
-        cv2.rectangle(image, tuple(points[0]), tuple(points[1]), COLORS[shape['label']], 2)
+        cv2.rectangle(image, tuple(points[0]), tuple(points[1]), (0, 0, 255), 2)
 
     return image
 
@@ -56,9 +48,10 @@ def visualize_bboxes(image_dir, annotation_dir):
             # plt.show()
 
 def main(args):
-    for sub_dir in os.listdir(args.root_dir):
-        sub_dir = os.path.join(args.root_dir, sub_dir)
-        visualize_bboxes(sub_dir, sub_dir)
+    # for sub_dir in os.listdir(args.root_dir):
+    #     sub_dir = os.path.join(args.root_dir, sub_dir)
+    #     visualize_bboxes(sub_dir, sub_dir)
+    visualize_bboxes(args.root_dir, args.root_dir)
 
 if __name__ == "__main__":
     import argparse
@@ -69,3 +62,4 @@ if __name__ == "__main__":
 
 # Run the script
 # python3 visualize_bbox.py --root_dir ~/boats_dataset_processing/bags_processing/Kaohsiung_Port_dataset_labelme/d435_images
+# python3 visualize_bbox.py --root_dir ~/boats_dataset_processing/bags_processing/GuardBoat_images

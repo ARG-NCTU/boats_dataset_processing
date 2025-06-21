@@ -165,3 +165,8 @@ if __name__ == '__main__':
 # python3 coco2parquet.py --input_dir real_lifebuoy_dataset/annotations --image_dir real_lifebuoy_dataset/images --output_dir real_lifebuoy_dataset_hf/annotations
 # python3 coco2parquet.py --input_dir Kaohsiung_Port_dataset/annotations --image_dir Kaohsiung_Port_dataset/images --output_dir Kaohsiung_Port_dataset_hf/annotations
 # python3 coco2parquet.py --input_dir Tainan_Lifebuoy_dataset/annotations --image_dir Tainan_Lifebuoy_dataset/images --output_dir Tainan_Lifebuoy_dataset_hf/annotations
+
+# python3 coco2parquet.py --input_dir KS_Buoy_dataset/annotations --image_dir KS_Buoy_dataset/images --output_dir KS_Buoy_dataset_hf/annotations
+# python3 coco2parquet.py --input_dir GuardBoat_dataset/annotations --image_dir GuardBoat_dataset/images --output_dir GuardBoat_dataset_hf/annotations
+
+# python3 coco2parquet.py --input_dir TW_Marine_2cls_dataset/annotations --image_dir TW_Marine_2cls_dataset/images --output_dir TW_Marine_2cls_dataset_hf/annotations

@@ -99,15 +99,73 @@ huggingface-cli upload ARG-NCTU/Kaohsiung_Port_dataset_2024 annotations/instance
 Upload coco format dataset
 ```bash
 cd ~/boats_dataset_processing/Kaohsiung_Port_dataset
-huggingface-cli upload ARG-NCTU/Kaohsiung_Port_dataset_2024 annotations/classes.txt data/classes.txt --repo-type=dataset --commit-message="Upload classes list to hub"
-huggingface-cli upload ARG-NCTU/Kaohsiung_Port_dataset_coco_2024 annotations/classes.txt classes.txt --repo-type=dataset --commit-message="Upload classes list to hub"
-huggingface-cli upload ARG-NCTU/Kaohsiung_Port_dataset_coco_2024 ./annotations ./data --repo-type=dataset --commit-message="Upload training and val labels and classes to hub"
+huggingface-cli upload ARG-NCTU/Kaohsiung_Port_dataset_coco_2024 ./annotations ./ --repo-type=dataset --commit-message="Upload training and val labels and classes to hub"
+huggingface-cli upload ARG-NCTU/Kaohsiung_Port_dataset_coco_2024 ./train2024.zip ./train2024.zip --repo-type=dataset --commit-message="Upload training images to hub"
+huggingface-cli upload ARG-NCTU/Kaohsiung_Port_dataset_coco_2024 ./val2024.zip ./val2024.zip --repo-type=dataset --commit-message="Upload val images to hub"
+huggingface-cli upload ARG-NCTU/Kaohsiung_Port_dataset_coco_2024 ./images.zip ./images.zip --repo-type=dataset --commit-message="Upload training and val images to hub"
+huggingface-cli upload ARG-NCTU/Kaohsiung_Port_dataset_2024 ./images.zip ./data/images.zip --repo-type=dataset --commit-message="Upload training and val images to hub"
 zip -r images.zip images/
 huggingface-cli upload ARG-NCTU/Kaohsiung_Port_dataset_2024 ./images.zip ./data/images.zip --repo-type=dataset --commit-message="Upload all images to hub"
 zip -r train2024.zip train2024/
 huggingface-cli upload ARG-NCTU/Kaohsiung_Port_dataset_coco_2024 ./train2024.zip ./train2024.zip --repo-type=dataset --commit-message="Upload training images to hub"
 zip -r val2024.zip val2024/
 huggingface-cli upload ARG-NCTU/Kaohsiung_Port_dataset_coco_2024 ./val2024.zip ./val2024.zip --repo-type=dataset --commit-message="Upload val images to hub"
+```
+
+#### 4.6. Kaohsiung Port Buoy dataset
+
+Upload dataset
+```bash
+cd ~/boats_dataset_processing/KS_Buoy_dataset_hf/
+huggingface-cli login
+
+huggingface-cli upload ARG-NCTU/KS_Buoy_dataset_2025 README.md --repo-type=dataset --commit-message="Update README to hub"
+huggingface-cli upload ARG-NCTU/KS_Buoy_dataset_2025 annotations/instances_train2024.parquet data/instances_train2024.parquet --repo-type=dataset --commit-message="Upload training labels to hub"
+huggingface-cli upload ARG-NCTU/KS_Buoy_dataset_2025 annotations/instances_val2024.parquet data/instances_val2024.parquet --repo-type=dataset --commit-message="Upload val labels to hub"
+
+```
+
+Upload coco format dataset
+```bash
+cd ~/boats_dataset_processing/KS_Buoy_dataset
+huggingface-cli upload ARG-NCTU/KS_Buoy_dataset_coco_2025 ./annotations ./ --repo-type=dataset --commit-message="Upload training and val labels and classes to hub"
+huggingface-cli upload ARG-NCTU/KS_Buoy_dataset_2025 ./annotations/classes.txt ./data/classes.txt --repo-type=dataset --commit-message="Upload classes to hub"
+sudo apt update
+sudo apt install zip
+zip -r images.zip images/
+huggingface-cli upload ARG-NCTU/KS_Buoy_dataset_2025 ./images.zip ./data/images.zip --repo-type=dataset --commit-message="Upload all images to hub"
+zip -r train2024.zip train2024/
+huggingface-cli upload ARG-NCTU/KS_Buoy_dataset_coco_2025 ./train2024.zip ./train2024.zip --repo-type=dataset --commit-message="Upload training images to hub"
+zip -r val2024.zip val2024/
+huggingface-cli upload ARG-NCTU/KS_Buoy_dataset_coco_2025 ./val2024.zip ./val2024.zip --repo-type=dataset --commit-message="Upload val images to hub"
+```
+
+#### 4.7. GuarBoat dataset
+
+Upload dataset
+```bash
+cd ~/boats_dataset_processing/GuardBoat_dataset_hf/
+huggingface-cli login
+
+huggingface-cli upload ARG-NCTU/GuardBoat_dataset_2025 README.md --repo-type=dataset --commit-message="Update README to hub"
+huggingface-cli upload ARG-NCTU/GuardBoat_dataset_2025 annotations/instances_train2025.parquet data/instances_train2025.parquet --repo-type=dataset --commit-message="Upload training labels to hub"
+huggingface-cli upload ARG-NCTU/GuardBoat_dataset_2025 annotations/instances_val2025.parquet data/instances_val2025.parquet --repo-type=dataset --commit-message="Upload val labels to hub"
+
+```
+
+Upload coco format dataset
+```bash
+cd ~/boats_dataset_processing/GuardBoat_dataset
+huggingface-cli upload ARG-NCTU/GuardBoat_dataset_coco_2025 ./annotations ./ --repo-type=dataset --commit-message="Upload training and val labels and classes to hub"
+huggingface-cli upload ARG-NCTU/GuardBoat_dataset_2025 ./annotations/classes.txt ./data/classes.txt --repo-type=dataset --commit-message="Upload classes to hub"
+sudo apt update
+sudo apt install zip
+zip -r images.zip images/
+huggingface-cli upload ARG-NCTU/GuardBoat_dataset_2025 ./images.zip ./data/images.zip --repo-type=dataset --commit-message="Upload all images to hub"
+zip -r train2025.zip train2025/
+huggingface-cli upload ARG-NCTU/GuardBoat_dataset_coco_2025 ./train2025.zip ./train2025.zip --repo-type=dataset --commit-message="Upload training images to hub"
+zip -r val2025.zip val2025/
+huggingface-cli upload ARG-NCTU/GuardBoat_dataset_coco_2025 ./val2025.zip ./val2025.zip --repo-type=dataset --commit-message="Upload val images to hub"
 ```
 
 ### 5. Download HuggingFace dataset

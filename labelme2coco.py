@@ -155,9 +155,9 @@ def labelme2real(labelme_dir, output_image_dir, class_list):
                         print("====================================")
                         continue
                     area = w * h
-                    if area < 200:
-                        print(f"Skipping small annotation {label} in {json_file}")
-                        continue
+                    # if area < 200:
+                    #     print(f"Skipping small annotation {label} in {json_file}")
+                    #     continue
                     bbox = [x1, y1, w, h]
                     category_id = class_list.index(label)
                     annotation = {
@@ -254,8 +254,8 @@ def main():
 if __name__ == "__main__":
     main()
 
-# python3 labelme2real.py --labelme_dir bags_processing/d435_images --output_dir Kaohsiung_Port_dataset
-# python3 labelme2real.py --labelme_dir bags_processing/label --output_dir Tainan_Lifebuoy_dataset
+# python3 labelme2coco.py --labelme_dir bags_processing/d435_images --output_dir Kaohsiung_Port_dataset
+# python3 labelme2coco.py --labelme_dir bags_processing/label --output_dir Tainan_Lifebuoy_dataset
 
-# python3 labelme2real.py --labelme_dir ks_buoy_labels_images --output_dir KS_Buoy_dataset --classes Boat_dataset_unity/Buoy/classes.txt
-# python3 labelme2real.py --labelme_dir bags_processing/GuardBoat_images --output_dir GuardBoat_dataset --classes Boat_dataset_unity/GuardBoat/classes.txt
+# python3 labelme2coco.py --labelme_dir ks_buoy_labels_images --output_dir KS_Buoy_dataset --classes Boat_dataset_unity/Buoy/classes.txt
+# python3 labelme2coco.py --labelme_dir bags_processing/GuardBoat_images --output_dir GuardBoat_dataset --classes Boat_dataset_unity/GuardBoat/classes.txt

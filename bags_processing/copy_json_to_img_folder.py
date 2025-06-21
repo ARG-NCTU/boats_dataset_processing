@@ -10,7 +10,7 @@ def copy_json_to_img_folder(json_dir, img_dir):
 def main():
     for json_dir in os.listdir("label"):
         json_dir_path = os.path.join("label", json_dir)
-        img_dir_path = os.path.join("d435_images", json_dir.replace("label_", ""))
+        img_dir_path = os.path.join("images", json_dir.replace("label_", ""))
         copy_json_to_img_folder(json_dir_path, img_dir_path)
 
 if __name__ == "__main__":

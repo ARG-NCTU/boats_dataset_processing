@@ -1,1 +1,1 @@
-Docker/cpu/docker_run.sh
+Docker/cpu/run.sh
