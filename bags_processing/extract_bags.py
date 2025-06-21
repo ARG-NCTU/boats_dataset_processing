@@ -128,4 +128,10 @@ if __name__ == "__main__":
 
 # python3 extract_bags.py --bag_dir d435_bags --output_image_dir d435_images --output_video_dir d435_videos --accelerate_rate 1.0 --topic /detr_object_detection/detection_result_img/camera_stitched/compressed --output_names _detr --compressed
 
+# python3 extract_bags.py --bag_dir 20250318_bag --output_image_dir 20250318_images --output_video_dir 20250318_videos --accelerate_rate 1.0 --topic /camera1/color/image_raw/compressed /camera2/color/image_raw/compressed /camera3/color/image_raw/compressed --output_names _left _mid _right --compressed
+
+# python3 extract_bags.py --bag_dir 20250318-fix_bag --output_image_dir 20250318-fix_images --output_video_dir 20250318-fix_videos --accelerate_rate 1.0 --topic /camera1_fix/color/image_raw/compressed /camera2_fix/color/image_raw/compressed /camera3_fix/color/image_raw/compressed --output_names _right _mid _left --compressed
+
+# python3 extract_bags.py --bag_dir images-2025_0319_1110 --output_image_dir images-2025_0319_1110_images --output_video_dir images-2025_0319_1110_videos --accelerate_rate 1.0 --topic /camera1_fix/color/image_raw/compressed /camera2_fix/color/image_raw/compressed /camera3_fix/color/image_raw/compressed --output_names _right _mid _left --compressed
+
 
