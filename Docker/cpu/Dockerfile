@@ -116,6 +116,14 @@ RUN pip3 install transformers \
 ##################################### labelme #####################################
 RUN pip3 install labelme
 
+##################################### zip #####################################
+
+RUN apt-get -o Acquire::ForceIPv4=true update && apt-get -yq dist-upgrade \
+    && apt-get -o Acquire::ForceIPv4=true install -yq --no-install-recommends \ 
+    zip \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
 ##################################### setting ###################################################
 
 RUN chown -R ${USER}:${USER} ${HOME}/

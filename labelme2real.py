@@ -11,13 +11,11 @@ from tqdm import tqdm
 import argparse
 from merge_real_virtual import split_dataset, copy_images
 
-def load_classes():
+def load_classes(classes_path):
     class_list = []
-    with open("bags_processing/classes.txt", "r") as f:
+    with open(classes_path, "r") as f:
         class_list = [cname.strip() for cname in f.readlines()]
     return class_list
-
-class_list = load_classes()
 
 # def labelme2real(labelme_dir, output_image_dir):
 
@@ -93,7 +91,7 @@ class_list = load_classes()
 #     print(f"Converted {labelme_dir} to coco format")
 #     return coco_data
 
-def labelme2real(labelme_dir, output_image_dir):
+def labelme2real(labelme_dir, output_image_dir, class_list):
 
     coco_data = {
         "images": [],
@@ -124,22 +122,23 @@ def labelme2real(labelme_dir, output_image_dir):
                 "width": width,
                 "height": height
             }
-            coco_data["images"].append(image_info)
-
-            # Copy image to output directory
-            cv2.imwrite(os.path.join(output_image_dir, out_image_name), image)
             
             # Check if JSON file exists
             json_file = file_name.replace(".png", ".json")
             json_path = os.path.join(labelme_dir, json_file)
             if os.path.exists(json_path):
+                
                 with open(json_path) as f:
                     data = json.load(f)
 
+                anno_num = 0
                 # Process annotations
                 for shape in data["shapes"]:
                     points = shape["points"]
                     label = shape["label"]
+                    lower_class_list = [cls.lower() for cls in class_list.copy()]
+                    if label.lower() in lower_class_list:
+                        label = class_list[lower_class_list.index(label.lower())]
                     x1, y1 = points[0]
                     x1, y1 = int(round(x1)), int(round(y1))
                     x2, y2 = points[1]
@@ -156,6 +155,9 @@ def labelme2real(labelme_dir, output_image_dir):
                         print("====================================")
                         continue
                     area = w * h
+                    if area < 200:
+                        print(f"Skipping small annotation {label} in {json_file}")
+                        continue
                     bbox = [x1, y1, w, h]
                     category_id = class_list.index(label)
                     annotation = {
@@ -167,11 +169,22 @@ def labelme2real(labelme_dir, output_image_dir):
                         "iscrowd": 0
                     }
 
+                    anno_num += 1
+
                     coco_data["annotations"].append(annotation)
                     annotation_id += 1
+                
+                if anno_num > 0:
+                    
+                    coco_data["images"].append(image_info)
+
+                    # Copy image to output directory
+                    cv2.imwrite(os.path.join(output_image_dir, out_image_name), image)
+
+                else:
+                    print(f"No annotations left for {image_name}. Skipping image.")
             else:
-                # Add empty annotations for images without JSON
-                print(f"No annotations for {image_name}. Adding empty annotations.")
+                print(f"No annotations for {image_name}.")
             
             image_id += 1
 
@@ -214,10 +227,15 @@ def main():
     os.makedirs(output_image_dir, exist_ok=True)
 
     coco_data_list = []
-    for labelme_dir in tqdm(os.listdir(args.labelme_dir), desc="Processing labelme", leave=False):
-        labelme_dir_path = os.path.join(args.labelme_dir, labelme_dir)
-        coco_data = labelme2real(labelme_dir_path, output_image_dir)
-        coco_data_list.append(coco_data)
+    # for labelme_dir in tqdm(os.listdir(args.labelme_dir), desc="Processing labelme", leave=False):
+    #     labelme_dir_path = os.path.join(args.labelme_dir, labelme_dir)
+    #     class_list = load_classes(args.classes)
+    #     coco_data = labelme2real(labelme_dir_path, output_image_dir, class_list)
+    #     coco_data_list.append(coco_data)
+
+    class_list = load_classes(args.classes)
+    coco_data = labelme2real(args.labelme_dir, output_image_dir, class_list)
+    coco_data_list.append(coco_data)
     
     merged_data = merge_coco(coco_data_list)
     train_data, val_data = split_dataset(merged_data)
@@ -231,10 +249,13 @@ def main():
     output_image_dir = f"{args.output_dir}/val2024"
     copy_images(val_data['images'], [f"{args.output_dir}/images"], output_image_dir)
 
-    os.system(f"cp bags_processing/classes.txt {args.output_dir}/annotations/classes.txt")
+    os.system(f"cp {args.classes} {args.output_dir}/annotations/classes.txt")
 
 if __name__ == "__main__":
     main()
 
 # python3 labelme2real.py --labelme_dir bags_processing/d435_images --output_dir Kaohsiung_Port_dataset
 # python3 labelme2real.py --labelme_dir bags_processing/label --output_dir Tainan_Lifebuoy_dataset
+
+# python3 labelme2real.py --labelme_dir ks_buoy_labels_images --output_dir KS_Buoy_dataset --classes Boat_dataset_unity/Buoy/classes.txt
+# python3 labelme2real.py --labelme_dir bags_processing/GuardBoat_images --output_dir GuardBoat_dataset --classes Boat_dataset_unity/GuardBoat/classes.txt
