@@ -19,29 +19,29 @@ echo "  DATASET_HF_DIR    = $DATASET_HF_DIR"
 echo "🔑 Logging into Hugging Face..."
 huggingface-cli login
 
-# # === Upload HF parquet dataset ===
-# echo "⬆️ Uploading Parquet-based dataset to $DATASET_HF_REPO..."
-# cd ~/boats_dataset_processing/"$DATASET_HF_DIR"
+# === Upload HF parquet dataset ===
+echo "⬆️ Uploading Parquet-based dataset to $DATASET_HF_REPO..."
+cd ~/boats_dataset_processing/"$DATASET_HF_DIR"
 
-# huggingface-cli upload "$DATASET_HF_REPO" annotations/instances_train2024.parquet data/instances_train2024.parquet \
-#   --repo-type=dataset \
-#   --commit-message="Upload training labels to hub"
+huggingface-cli upload "$DATASET_HF_REPO" annotations/instances_train2024.parquet data/instances_train2024.parquet \
+  --repo-type=dataset \
+  --commit-message="Upload training labels to hub"
 
-# huggingface-cli upload "$DATASET_HF_REPO" annotations/instances_val2024.parquet data/instances_val2024.parquet \
-#   --repo-type=dataset \
-#   --commit-message="Upload val labels to hub"
+huggingface-cli upload "$DATASET_HF_REPO" annotations/instances_val2024.parquet data/instances_val2024.parquet \
+  --repo-type=dataset \
+  --commit-message="Upload val labels to hub"
 
-# # === Upload COCO dataset ===
-# echo "⬆️ Uploading COCO-format dataset to $DATASET_COCO_REPO..."
-# cd ~/boats_dataset_processing/"$DATASET_DIR"
+# === Upload COCO dataset ===
+echo "⬆️ Uploading COCO-format dataset to $DATASET_COCO_REPO..."
+cd ~/boats_dataset_processing/"$DATASET_DIR"
 
-# huggingface-cli upload "$DATASET_COCO_REPO" ./annotations ./ \
-#   --repo-type=dataset \
-#   --commit-message="Upload training and val labels and classes to hub"
+huggingface-cli upload "$DATASET_COCO_REPO" ./annotations ./ \
+  --repo-type=dataset \
+  --commit-message="Upload training and val labels and classes to hub"
 
-# huggingface-cli upload "$DATASET_HF_REPO" ./annotations/classes.txt ./data/classes.txt \
-#   --repo-type=dataset \
-#   --commit-message="Upload classes to hub"
+huggingface-cli upload "$DATASET_HF_REPO" ./annotations/classes.txt ./data/classes.txt \
+  --repo-type=dataset \
+  --commit-message="Upload classes to hub"
 
 # === Zip and upload images ===
 cd ~/boats_dataset_processing/"$DATASET_DIR"
