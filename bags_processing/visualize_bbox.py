@@ -24,7 +24,7 @@ def visualize_bboxes(image_dir, annotation_dir):
     output_dir = os.path.join('Visualization', image_dir.split('/')[-1])
     os.makedirs(output_dir, exist_ok=True)
     # sort key is the json file name
-    for filename in sorted(os.listdir(annotation_dir), key=lambda x: int(x.split('.')[0])):
+    for filename in sorted(os.listdir(annotation_dir), key=lambda x: str(x.split('.')[0])):
         if filename.endswith('.json'):
             json_path = os.path.join(annotation_dir, filename)
             annotations = load_labelme_annotation(json_path)

@@ -4,7 +4,7 @@ import cv2
 import os
 import shutil
 from tqdm import tqdm
-from pad_resize_image import pad_resize_image
+import argparse
 
 def convert_mp4_to_png(input_dir, output_dir):
     # Create output directory if it doesn't exist
@@ -24,7 +24,7 @@ def convert_mp4_to_png(input_dir, output_dir):
             img_count = 1
             total_frames = int(video.get(cv2.CAP_PROP_FRAME_COUNT))
             dismiss = 0
-            max_dismiss = 60
+            max_dismiss = 120
             while success:
                 if dismiss < max_dismiss:
                     dismiss += 1
@@ -33,7 +33,7 @@ def convert_mp4_to_png(input_dir, output_dir):
                 print(f"Processing {file_name}: {count}/{total_frames}", end="\r")
                 dismiss = 0
                 # Save frame as PNG file
-                cv2.imwrite(f"{output_dir}/{file_name}/{img_count}.png", image)
+                cv2.imwrite(f"{output_dir}/{file_name}/{file_name}_{img_count}.png", image)
                 success, image = video.read()
                 count += max_dismiss
                 img_count += 1
@@ -42,7 +42,6 @@ def convert_mp4_to_png(input_dir, output_dir):
 
 def main(args):
     convert_mp4_to_png(args.input_dir, args.output_dir)
-    pad_resize_image(args.output_dir, args.output_dir, 800)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Extract images and from videos files.")
@@ -50,3 +49,6 @@ if __name__ == "__main__":
     parser.add_argument("--output_dir", type=str, default="d435_images", help="Directory to save extracted images.")
     args = parser.parse_args()
     main(args)
+
+# Usage
+# python3 mp42png.py --input_dir k180_0610/used --output_dir k180_0610/used_images
