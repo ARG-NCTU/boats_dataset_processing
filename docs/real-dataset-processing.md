@@ -31,27 +31,20 @@ Build all ros1 packages
 source build_ros1_all.sh
 ```
 
+## Data preparation
+
+ROS Bag Example NAS [link](http://gofile.me/773h8/jDUcEglEw)
+
+Make bags dir
+```bash
+mkdir -p ~/boats_dataset_processing/bags
+```
+
+Put these bags in bags folder. Notice that stitched images are not recorded in these bags.
+
 ## Usage
 
-### Extract ROS Bag (if stitched image in bag)
-
-```bash
-cd ~/boats_dataset_processing/bags_processing
-```
-
-Stitched cameras, 1.0x acceleration rate, compressed images
-```bash
-python3 extract_bags.py \
---bag_dir bags \
---output_image_dir images \
---output_video_dir videos \
---accelerate_rate 1.0 \
---topic /camera_pano_stitched/color/image_raw/compressed \
---output_names _stitched \
---compressed
-```
-
-### Play ROS Bag and Save images (if stitched image NOT in bag)
+### Play ROS Bag and Save images (if stitched images NOT in bag)
 
 #### Terminal 1: ROSCORE
 
@@ -96,6 +89,50 @@ cd ~/boats_dataset_processing
 source cpu_join.sh
 source environment.sh
 roslaunch image_processing save_images.launch
+```
+
+Press "space" key to disable/enable saving images.
+
+#### Terminal 5: Foxglove to visualize
+
+```bash
+cd ~/boats_dataset_processing
+source cpu_join.sh
+source environment.sh
+rosrun foxglove_bridge foxglove_bridge
+```
+
+If you haven't installed the Foxglove app, download it from [Foxglove](https://foxglove.dev/download) (choose the "x86" version).
+
+After launching the app:
+
+* Go to **Layout** > **+ Add** > **Import Personal Layout**
+* Select: `~/boats_dataset_processing/foxglove/camera1-2-3-pano-stitched.json`
+* Then click **Open**
+
+To open the ROS2 connection:
+
+* Click the top-left Foxglove logo
+* Select **Open Connection**
+
+<img src="example/camera1-2-3-pano-stitched.gif" alt="camera1-2-3-pano-stitched" width="600" height="auto" />
+
+### Extract ROS Bag (if stitched images in bag)
+
+```bash
+cd ~/boats_dataset_processing/bags_processing
+```
+
+Stitched cameras, 1.0x acceleration rate, compressed images
+```bash
+python3 extract_bags.py \
+--bag_dir bags \
+--output_image_dir images \
+--output_video_dir videos \
+--accelerate_rate 1.0 \
+--topic /camera_pano_stitched/color/image_raw/compressed \
+--output_names _stitched \
+--compressed
 ```
 
 ### Labelme
@@ -143,6 +180,12 @@ python3 visualize_coco.py \
 --output_dir Ball_dataset/Visualization
 ```
 
+Download existed COCO format dataset (if extending your dataset)
+
+```bash
+source download_coco.sh ARG-NCTU/TW_Marine_2cls_dataset_coco TW_Marine_2cls_dataset
+```
+
 Extend Dataset
 ```bash
 python3 merge_coco.py \
@@ -159,6 +202,12 @@ python3 coco2parquet.py \
 --output_dir TW_Marine_5cls_dataset_hf/annotations
 ```
 
+Visualize parquet format annotations
+```bash
+python3 visualize_parquet.py \
+--parquet_folder TW_Marine_5cls_dataset/annotations
+```
+
 Add TW_Marine_5cls_dataset/annotations/classes.txt file and edit this file like:
 ```bash
 Buoy
@@ -166,6 +215,11 @@ GuardBoat
 RedBall
 YellowBall
 GreenBall
+```
+
+Copy train / val images
+```bash
+python3 copy_train_val_images.py --dir TW_Marine_5cls_dataset
 ```
 
 Upload HuggingFace dataset
