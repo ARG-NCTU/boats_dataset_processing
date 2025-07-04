@@ -207,7 +207,7 @@ python3 coco2parquet.py \
 Visualize parquet format annotations
 ```bash
 python3 visualize_parquet.py \
---parquet_folder TW_Marine_5cls_dataset/annotations
+--parquet_folder TW_Marine_5cls_dataset_hf/annotations
 ```
 
 Add TW_Marine_5cls_dataset/annotations/classes.txt file and edit this file like:
