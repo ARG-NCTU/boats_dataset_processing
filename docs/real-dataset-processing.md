@@ -110,10 +110,12 @@ After launching the app:
 * Select: `~/boats_dataset_processing/foxglove/camera1-2-3-pano-stitched.json`
 * Then click **Open**
 
-To open the ROS2 connection:
+To open the ROS1 connection:
 
 * Click the top-left Foxglove logo
 * Select **Open Connection**
+* Select **ROS 1**
+* Then click **Open**
 
 <img src="example/camera1-2-3-pano-stitched.gif" alt="camera1-2-3-pano-stitched" width="600" height="auto" />
 
