@@ -4,7 +4,19 @@ import os
 
 def visualize_parquet_annotations(parquet_path):
     df = pd.read_parquet(parquet_path)
-    print(df.head())
+
+    # 設定不截斷欄位
+    pd.set_option("display.max_colwidth", None)
+
+    # 取前 5 筆
+    df_first5 = df.iloc[:5].copy()
+
+    # 縮短顯示的 image / image_path
+    df_first5["image"] = df_first5["image"].apply(lambda x: str(x)[:15] + "..." if len(str(x)) > 15 else str(x))
+    df_first5["image_path"] = df_first5["image_path"].apply(lambda x: x[:15] + "..." if len(x) > 15 else x)
+
+    # 印出 image_id, image, image_path, objects
+    print(df_first5[["image_id", "image", "image_path", "objects"]])
 
 def main():
     parser = argparse.ArgumentParser(description="Visualize Parquet annotations.")
