@@ -114,11 +114,28 @@ RUN pip3 install transformers \
     timm \
     albumentations
 
-##################################### labelme #####################################
+##################################### labelme+SAM #####################################
 RUN pip3 install labelme
 
-##################################### Stiching #####################################
-RUN pip3 install cupy
+RUN apt-get update && apt-get install -y \
+        python3-pyqt5  \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN python3 -m pip install --no-cache-dir --upgrade \
+      git+https://github.com/originlake/labelme-with-segment-anything.git
+
+RUN python3 -m pip install --no-cache-dir --force-reinstall --no-deps \
+      git+https://github.com/facebookresearch/segment-anything.git
+
+RUN labelme --nodata --output /tmp/x.json /usr/share/icons/hicolor/32x32/apps/desktop-default.png || true
+RUN sed -i '/^sam:/,/^[^ ]/d' /home/arg/.labelmerc && \
+    printf '%s\n' \
+      'sam:' \
+      '  weights: vit_b' \
+      '  maxside: 800' \
+      '  approxpoly_epsilon: 1' \
+      '  device: "cuda"' \
+      >> /home/arg/.labelmerc
 
 ##################################### setting ###################################################
 

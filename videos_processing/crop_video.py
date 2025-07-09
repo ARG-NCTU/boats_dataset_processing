@@ -1,112 +1,120 @@
-#!/usr/bin/env python3
 import cv2
 import json
-import argparse
-import os
 import numpy as np
+import argparse
 
-# Initialize variables with predefined corner points for a rectangular area
-rect_pts = [(100, 100), (400, 100), (400, 400), (100, 400)]  # Default rectangular points
-dragging = -1  # Index of the point being dragged, -1 means no point is being dragged
+# 全域變數: 四個頂點, -1 表示不在拖曳
+rect_pts = [(100, 100), (400, 100), (400, 400), (100, 400)]
+dragging = -1
 
+# 更新矩形頂點, 同時保持矩形形狀
+def update_rectangle(x, y, idx):
+    global rect_pts
+    # 固定相對邊
+    if idx == 0:  # 左上
+        rect_pts[0] = (x, y)
+        rect_pts[1] = (rect_pts[1][0], y)
+        rect_pts[3] = (x, rect_pts[3][1])
+    elif idx == 1:  # 右上
+        rect_pts[1] = (x, y)
+        rect_pts[0] = (rect_pts[0][0], y)
+        rect_pts[2] = (x, rect_pts[2][1])
+    elif idx == 2:  # 右下
+        rect_pts[2] = (x, y)
+        rect_pts[3] = (rect_pts[3][0], y)
+        rect_pts[1] = (x, rect_pts[1][1])
+    elif idx == 3:  # 左下
+        rect_pts[3] = (x, y)
+        rect_pts[2] = (rect_pts[2][0], y)
+        rect_pts[0] = (x, rect_pts[0][1])
+
+# 顯示矩形與尺寸
+def update_frame(frame):
+    global rect_pts
+    temp = frame.copy()
+    # 畫頂點與邊
+    for p in rect_pts:
+        cv2.circle(temp, p, 5, (0, 255, 0), -1)
+    for i in range(4):
+        cv2.line(temp, rect_pts[i], rect_pts[(i+1)%4], (0, 255, 0), 2)
+    # 計算 width, height
+    w = int(np.linalg.norm(np.array(rect_pts[0]) - np.array(rect_pts[1])))
+    h = int(np.linalg.norm(np.array(rect_pts[0]) - np.array(rect_pts[3])))
+    # 顯示文字
+    cv2.putText(temp, f"W:{w}px H:{h}px", (rect_pts[0][0], rect_pts[0][1]-10),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0,255,0), 2)
+    cv2.imshow("Video", temp)
+
+# 輸入尺寸, 重新設定矩形 (以左上角為基準)
+def input_dimensions():
+    global rect_pts
+    try:
+        w = int(input("請輸入寬度 (px): "))
+        h = int(input("請輸入高度 (px): "))
+    except ValueError:
+        print("輸入錯誤，請輸入整數")
+        return
+    x0, y0 = rect_pts[0]
+    rect_pts = [(x0, y0), (x0+w, y0), (x0+w, y0+h), (x0, y0+h)]
+    print(f"矩形已設定為 W={w}px, H={h}px")
+
+# 滑鼠事件
 def click_and_drag(event, x, y, flags, param):
-    global rect_pts, dragging
-
-    # Mouse down to start dragging
+    global dragging
     if event == cv2.EVENT_LBUTTONDOWN:
-        for i, pt in enumerate(rect_pts):
-            if abs(pt[0] - x) < 10 and abs(pt[1] - y) < 10:  # Check if click is near a point
+        for i, p in enumerate(rect_pts):
+            if abs(x-p[0])<10 and abs(y-p[1])<10:
                 dragging = i
                 break
-
-    # Mouse move to drag the selected point and adjust rectangle
     elif event == cv2.EVENT_MOUSEMOVE and dragging != -1:
         update_rectangle(x, y, dragging)
-        update_frame()
-
-    # Mouse up to release the point
     elif event == cv2.EVENT_LBUTTONUP:
         dragging = -1
 
-def update_rectangle(x, y, index):
-    global rect_pts
-    if index == 0:  # Top-left
-        rect_pts[0] = (x, y)
-        rect_pts[1] = (rect_pts[1][0], y)           # Adjust top-right y
-        rect_pts[3] = (x, rect_pts[3][1])           # Adjust bottom-left x
-    elif index == 1:  # Top-right
-        rect_pts[1] = (x, y)
-        rect_pts[0] = (rect_pts[0][0], y)           # Adjust top-left y
-        rect_pts[2] = (x, rect_pts[2][1])           # Adjust bottom-right x
-    elif index == 2:  # Bottom-right
-        rect_pts[2] = (x, y)
-        rect_pts[1] = (x, rect_pts[1][1])           # Adjust top-right x
-        rect_pts[3] = (rect_pts[3][0], y)           # Adjust bottom-left y
-    elif index == 3:  # Bottom-left
-        rect_pts[3] = (x, y)
-        rect_pts[0] = (x, rect_pts[0][1])           # Adjust top-left x
-        rect_pts[2] = (rect_pts[2][0], y)           # Adjust bottom-right y
+# 儲存裁剪參數
+def save_cropped_info(json_path, pts, w, h):
+    info = {"points": pts, "width": w, "height": h}
+    with open(json_path, 'w') as f:
+        json.dump(info, f, indent=2)
 
-def update_frame():
-    # Redraw the frame with circles at points and lines between them
-    temp_frame = frame.copy()
-    for i in range(len(rect_pts)):
-        # Draw circles on each point
-        cv2.circle(temp_frame, rect_pts[i], 5, (0, 255, 0), -1)
-        # Draw lines between consecutive points
-        if i > 0:
-            cv2.line(temp_frame, rect_pts[i-1], rect_pts[i], (0, 255, 0), 2)
-    # Draw line closing the rectangle
-    cv2.line(temp_frame, rect_pts[3], rect_pts[0], (0, 255, 0), 2)
-    cv2.imshow("Video", temp_frame)
-
-def save_cropped_info(json_path, crop_info):
-    with open(json_path, 'w') as json_file:
-        json.dump(crop_info, json_file)
-    print(f"Crop info saved to {json_path}: {crop_info}")
-
-def crop_video(cap, output_path, json_path, rect_pts, fps):
-    # Convert points to an ordered quadrilateral for perspective transformation
-    pts_src = np.array(rect_pts, dtype="float32")
-    width = int(abs(rect_pts[1][0] - rect_pts[0][0]))
-    height = int(abs(rect_pts[3][1] - rect_pts[0][1]))
-
-    pts_dst = np.array([[0, 0], [width - 1, 0], [width - 1, height - 1], [0, height - 1]], dtype="float32")
-    transform_matrix = cv2.getPerspectiveTransform(pts_src, pts_dst)
-
-    crop_info = {
-        "points": rect_pts,
-        "width": width,
-        "height": height
-    }
-    save_cropped_info(json_path, crop_info)
+# 執行裁剪
+def crop_video(cap, output_path, json_path):
+    pts_src = np.array(rect_pts, dtype=np.float32)
+    w = int(np.linalg.norm(pts_src[0] - pts_src[1]))
+    h = int(np.linalg.norm(pts_src[0] - pts_src[3]))
+    pts_dst = np.array([[0,0], [w-1,0], [w-1,h-1], [0,h-1]], dtype=np.float32)
+    M = cv2.getPerspectiveTransform(pts_src, pts_dst)
 
     fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-    out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
+    fps = cap.get(cv2.CAP_PROP_FPS)
+    out = cv2.VideoWriter(output_path, fourcc, fps, (w, h))
 
     cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
     while True:
         ret, frame = cap.read()
         if not ret:
             break
-        warped_frame = cv2.warpPerspective(frame, transform_matrix, (width, height))
-        out.write(warped_frame)
-
+        warped = cv2.warpPerspective(frame, M, (w, h))
+        out.write(warped)
     out.release()
-    print("Cropped video has been saved.")
+    save_cropped_info(json_path, rect_pts, w, h)
+    print("裁剪完成")
 
-def main(args):
-    os.makedirs(os.path.dirname(args.output), exist_ok=True)
+# 主程式
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description="Process a video to show various processing results in quadrants.")
+    parser.add_argument('-i', '--input', type=str, default="TaichungPort/IMG_2550(1).MOV", help='Path to the input video file')
+    parser.add_argument('-o', '--output', type=str, default="TaichungPort/IMG_2550(1)-output.MOV", help='Path to the output cropped video file')
+    parser.add_argument('-j', '--json', type=str, default="TaichungPort/IMG_2550(1).json", help='Path to the output cropped info file')
+    args = parser.parse_args()
 
-    global frame
     cap = cv2.VideoCapture(args.input)
-    fps = int(cap.get(cv2.CAP_PROP_FPS))
-
     if not cap.isOpened():
-        print("Error opening video stream or file")
-        return
+        print("無法開啟影片")
+        exit(1)
 
     cv2.namedWindow("Video")
+    cv2.resizeWindow("Video", 800, 600)
     cv2.setMouseCallback("Video", click_and_drag)
 
     while True:
@@ -114,26 +122,16 @@ def main(args):
         if not ret:
             cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
             continue
-
-        # Display the frame with current points and lines
-        update_frame()
-        key = cv2.waitKey(1) & 0xFF
-
-        # If 'Enter' key is pressed and four points are set, crop the video
-        if key == 13 and len(rect_pts) == 4:
-            crop_video(cap, args.output, args.json, rect_pts, fps)
+        update_frame(frame)
+        key = cv2.waitKey(30) & 0xFF
+        if key == 13:  # Enter 開始裁剪
+            crop_video(cap, args.output, args.json)
             break
-
-        if key == ord("q"):
+        elif key == ord('i'):  # 按 i 直接輸入尺寸
+            input_dimensions()
+        elif key == ord('q'):
             break
 
     cap.release()
     cv2.destroyAllWindows()
 
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Process a video to show various processing results in quadrants.")
-    parser.add_argument('-i', '--input', type=str, default="stitched_videos_accelerated/2024-11-01-14-33-57_stitched_result.mp4", help='Path to the input video file')
-    parser.add_argument('-o', '--output', type=str, default="stitched_videos_accelerated/2024-11-01-14-33-57_stitched_result_cropped.mp4", help='Path to the output cropped video file')
-    parser.add_argument('-j', '--json', type=str, default="stitched_videos_accelerated/2024-11-01-14-33-57_stitched_result_cropped.json", help='Path to the output cropped info file')
-    args = parser.parse_args()
-    main(args)

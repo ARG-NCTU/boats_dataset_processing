@@ -1,1 +1,1 @@
-Docker/gpu/docker_run.sh
+Docker/gpu/run.sh

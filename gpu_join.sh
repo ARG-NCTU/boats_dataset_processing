@@ -1,1 +1,1 @@
-Docker/gpu/docker_join.sh
+Docker/gpu/join.sh
