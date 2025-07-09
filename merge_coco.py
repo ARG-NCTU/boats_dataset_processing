@@ -89,15 +89,19 @@ def main():
     train2 = load_json(os.path.join(ann2_dir, 'instances_train2024.json'))
     val1 = load_json(os.path.join(ann1_dir, 'instances_val2024.json'))
     val2 = load_json(os.path.join(ann2_dir, 'instances_val2024.json'))
+    test1 = load_json(os.path.join(ann1_dir, 'instances_test2024.json'))
+    test2 = load_json(os.path.join(ann2_dir, 'instances_test2024.json'))
 
     merged_train = merge_two_coco_sets(train1, train2)
     merged_val = merge_two_coco_sets(val1, val2)
+    merged_test = merge_two_coco_sets(test1, test2)
 
     save_json(merged_train, os.path.join(args.output_dir, 'annotations', 'instances_train2024.json'))
     save_json(merged_val, os.path.join(args.output_dir, 'annotations', 'instances_val2024.json'))
+    save_json(merged_test, os.path.join(args.output_dir, 'annotations', 'instances_test2024.json'))
 
     # if args.copy_images:
-    copy_images(merged_train['images'] + merged_val['images'],
+    copy_images(merged_train['images'] + merged_val['images'] + merged_test['images'],
                 source_dirs=[os.path.join(args.dataset1, 'images'),
                                 os.path.join(args.dataset2, 'images')],
                 dest_dir=os.path.join(args.output_dir, 'images'))

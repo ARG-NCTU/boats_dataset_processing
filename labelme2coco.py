@@ -238,16 +238,20 @@ def main():
     coco_data_list.append(coco_data)
     
     merged_data = merge_coco(coco_data_list)
-    train_data, val_data = split_dataset(merged_data)
+    # train_data, val_data = split_dataset(merged_data)
+    train_data, val_data, test_data = split_dataset(merged_data, test_ratio=0.1)
     os.makedirs(f"{args.output_dir}/annotations", exist_ok=True)
     save_coco(train_data, f"{args.output_dir}/annotations/instances_train2024.json")
     save_coco(val_data, f"{args.output_dir}/annotations/instances_val2024.json")
+    save_coco(test_data, f"{args.output_dir}/annotations/instances_test2024.json")
 
     os.makedirs(output_image_dir, exist_ok=True)
     output_image_dir = f"{args.output_dir}/train2024"
     copy_images(train_data['images'], [f"{args.output_dir}/images"], output_image_dir)
     output_image_dir = f"{args.output_dir}/val2024"
     copy_images(val_data['images'], [f"{args.output_dir}/images"], output_image_dir)
+    output_image_dir = f"{args.output_dir}/test2024"
+    copy_images(test_data['images'], [f"{args.output_dir}/images"], output_image_dir)
 
     os.system(f"cp {args.classes} {args.output_dir}/annotations/classes.txt")
 
