@@ -1,13 +1,10 @@
 import os
 from tqdm import tqdm
 
-# h1 h2
-# os.makedirs("stitched_results/h1_h2", exist_ok=True)
-# os.system("python stiching.py --input_dir Images/boats14-22/Scene1 --output_dir stiched_results/h1_h2")
 
 input_root = "Images"
 output_root = "stitched_results"
-suffixes = [None, "_depth", "_seg", "_thermal"]
+suffixes = [None, "_depth", "_thermal", "_seg"]
 h1_path = "stitched_results/h1_h2/homography/H1_1.npy"
 h2_path = "stitched_results/h1_h2/homography/H2_1.npy"
 
@@ -23,5 +20,6 @@ for boat_folder in tqdm(sorted(os.listdir(input_root)), desc="Boat Folder", leav
                 os.system(f"python3 Stitcher.py --input_dir {scene_folder_path} --output_dir {output_path} --h1_path {h1_path} --h2_path {h2_path}")
             else:
                 os.system(f"python3 Stitcher.py --input_dir {scene_folder_path} --suffix {suffix} --output_dir {output_path} --h1_path {h1_path} --h2_path {h2_path}")
+
         
-# python3 stitching_processing.py
+# python3 step2_stitching_processing.py
