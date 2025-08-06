@@ -59,7 +59,7 @@ python3 visualize_bbox.py \
 --root_dir ~/boats_dataset_processing/bags_processing/images
 ```
 
-### Real Dataset processing
+### Real Dataset processing Example
 
 ```bash
 cd ~/boats_dataset_processing
@@ -114,8 +114,14 @@ python3 copy_train_val_test_images.py --dir Ball_example
 
 Upload HuggingFace dataset
 
-<img src="example/huggingface-dataset-example.png" alt="huggingface dataset example" width="800" height="auto" />
+<img src="example/huggingface-dataset-example-handover.png" alt="huggingface dataset example" width="800" height="auto" />
 
 ```bash
 source upload_hf.sh zhuchi76/Ball_example zhuchi76/Ball_example_coco Ball_example Ball_example_hf
 ```
+
+### !!! Test !!!
+
+Please make "TW_Marine_5cls_example" and "TW_Marine_5cls_example_coco" huggingface dataset repo with your own huggingface account. 
+Sample images are under "bags_processing/TW_Marine_5cls_example" folder.
+Have fun !!!
