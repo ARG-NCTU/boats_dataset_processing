@@ -17,7 +17,7 @@ echo "  DATASET_HF_DIR    = $DATASET_HF_DIR"
 
 # === Login ===
 echo "🔑 Logging into Hugging Face..."
-huggingface-cli login
+huggingface-cli login --token "$HUGGINGFACE_TOKEN"
 
 # === Upload HF parquet dataset ===
 echo "⬆️ Uploading Parquet-based dataset to $DATASET_HF_REPO..."

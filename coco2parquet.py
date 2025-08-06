@@ -121,12 +121,11 @@ def transform_json_to_parquet(input_json_path, image_dir, output_parquet_path):
     with open(input_json_path, 'r') as file:
         json_data = json.load(file)
 
-    # Converting JSON to JSONL format with tqdm for progress tracking
+    # Converting JSON to PARQUET format with tqdm for progress tracking
     if os.path.exists(output_parquet_path):
         os.remove(output_parquet_path)  # Delete the file if it already exists
     convert_json_to_parquet(json_data, image_dir, output_parquet_path)
 
-    print(f"Conversion complete. The JSONL file is saved as {output_parquet_path}.")
 
 def convert_all_annotations(input_dir, image_dir, output_dir):
     # Create output directory if it doesn't exist

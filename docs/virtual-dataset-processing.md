@@ -1,34 +1,41 @@
 # Boats Dataset Processing
 This repo is used for converting Robotx2022-Unity-dataset format to COCO format, and further to HugingFace dataset format.
 
-## Usage
-Clone this repo:
+## Clone repo
+
 ```bash
-cd ~/ && git clone --recursive git@github.com:ARG-NCTU/boats_dataset_processing.git
+cd ~/ && git clone git@github.com:ARG-NCTU/boats_dataset_processing.git
 ```
 
-Or pull this repo:
+## Setting HuggingFace token
+
 ```bash
-cd ~/boats_dataset_processing && git pull
+vim ~/.bashrc
 ```
 
-Enter this repo:
+Go to HuggingFace Web page: this [link](https://huggingface.co/settings/tokens) to add your own token
+
+Then add this line (Replace with your token):
+```bash
+export HUGGINGFACE_TOKEN=hf_...xxxx
+```
+
+## Enter the repo
+
 ```bash
 cd ~/boats_dataset_processing
 ```
 
-Init submodule:
-```bash
-git submodule update --init --recursive
-```
+## Enter Docker Environment
 
-Run the oop docker:
-```bash
-source gpu_run.sh
-```
-If you have not installed gpu driver:
+For first terminal to enter Docker environment:
 ```bash
 source cpu_run.sh
+```
+
+For Second or more terminal to enter Docker environment:
+```bash
+source cpu_join.sh
 ```
 
 ### 1. Robotx2022 Unity dataset Processing
@@ -132,7 +139,7 @@ cd ~/boats_dataset_processing/Boat_dataset_hf
 
 Some useful instructions for uploading hugginface dataset:
 ```bash
-huggingface-cli login
+huggingface-cli login --token "$HUGGINGFACE_TOKEN"
 huggingface-cli upload ARG-NCTU/Boat_dataset_2024 Boat_dataset_2024.py --repo-type=dataset --commit-message="Update script to hub"
 huggingface-cli upload ARG-NCTU/Boat_dataset_2024 README.md --repo-type=dataset --commit-message="Update README to hub"
 ```

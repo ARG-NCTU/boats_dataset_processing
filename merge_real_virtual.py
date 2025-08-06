@@ -69,7 +69,7 @@ def split_dataset(dataset, val_ratio=0.2, test_ratio=None, batch_size=10000, see
     if test_ratio is not None:
         # Determine the number of test images
         num_test = int(len(indices) * test_ratio)
-        num_val = int((len(indices) - num_test) * val_ratio)
+        num_val = int((len(indices)) * val_ratio)
         num_train = len(indices) - num_val - num_test
     else:
         num_val = int(len(indices) * val_ratio)

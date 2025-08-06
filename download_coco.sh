@@ -5,7 +5,7 @@ set -e
 
 # === Login ===
 echo "🔑 Logging into Hugging Face..."
-huggingface-cli login
+huggingface-cli login --token "$HUGGINGFACE_TOKEN"
 
 # === Config with Defaults ===
 DATASET_COCO_REPO="${1:-ARG-NCTU/TW_Marine_2cls_dataset_coco}"

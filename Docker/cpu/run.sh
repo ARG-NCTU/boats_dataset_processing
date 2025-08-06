@@ -32,6 +32,7 @@ docker run \
     -e DISPLAY \
     -e QT_X11_NO_MITSHM=1 \
     -e XAUTHORITY=$XAUTH \
+    -e HUGGINGFACE_TOKEN=$HUGGINGFACE_TOKEN \
     -v "$XAUTH:$XAUTH" \
     -v "/home/$USER/$PROJ_NAME:/home/arg/$PROJ_NAME" \
     -v "/tmp/.X11-unix:/tmp/.X11-unix" \

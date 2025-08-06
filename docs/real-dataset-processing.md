@@ -1,15 +1,31 @@
 # Boats Dataset Processing
 
-## Setup
-Clone this repo:
+## Clone repo
+
 ```bash
 cd ~/ && git clone git@github.com:ARG-NCTU/boats_dataset_processing.git
 ```
 
-Enter this repo:
+## Setting HuggingFace token
+
+```bash
+vim ~/.bashrc
+```
+
+Go to HuggingFace Web page: this [link](https://huggingface.co/settings/tokens) to add your own token
+
+Then add this line (Replace with your token):
+```bash
+export HUGGINGFACE_TOKEN=hf_...xxxx
+```
+
+## Enter the repo
+
 ```bash
 cd ~/boats_dataset_processing
 ```
+
+## Enter Docker Environment
 
 For first terminal to enter Docker environment:
 ```bash
@@ -19,16 +35,6 @@ source cpu_run.sh
 For Second or more terminal to enter Docker environment:
 ```bash
 source cpu_join.sh
-```
-
-Clean all ros1 packages
-```bash
-source clean_ros1_all.sh
-```
-
-Build all ros1 packages
-```bash
-source build_ros1_all.sh
 ```
 
 ## Data preparation
