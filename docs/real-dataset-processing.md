@@ -221,7 +221,7 @@ GreenBall
 
 Copy train / val images
 ```bash
-python3 copy_train_val_images.py --dir TW_Marine_5cls_dataset
+python3 copy_train_val_test_images.py --dir TW_Marine_5cls_dataset
 ```
 
 Upload HuggingFace dataset

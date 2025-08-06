@@ -34,6 +34,9 @@ def main():
     print("\n\nval dataset:")
     val_parquet_path = os.path.join(args.parquet_folder, "instances_val2024.parquet")
     visualize_parquet_annotations(val_parquet_path)
+    print("\n\ntest dataset:")
+    test_parquet_path = os.path.join(args.parquet_folder, "instances_test2024.parquet")
+    visualize_parquet_annotations(test_parquet_path)
 
 if __name__ == "__main__":
     main()

@@ -31,6 +31,10 @@ huggingface-cli upload "$DATASET_HF_REPO" annotations/instances_val2024.parquet 
   --repo-type=dataset \
   --commit-message="Upload val labels to hub"
 
+huggingface-cli upload "$DATASET_HF_REPO" annotations/instances_test2024.parquet data/instances_test2024.parquet \
+  --repo-type=dataset \
+  --commit-message="Upload test labels to hub"
+
 # === Upload COCO dataset ===
 echo "⬆️ Uploading COCO-format dataset to $DATASET_COCO_REPO..."
 cd ~/boats_dataset_processing/"$DATASET_DIR"
@@ -60,6 +64,11 @@ zip -r val2024.zip val2024/
 huggingface-cli upload "$DATASET_COCO_REPO" ./val2024.zip ./val2024.zip \
   --repo-type=dataset \
   --commit-message="Upload val images to hub"
+
+zip -r test2024.zip test2024/
+huggingface-cli upload "$DATASET_COCO_REPO" ./test2024.zip ./test2024.zip \
+  --repo-type=dataset \
+  --commit-message="Upload test images to hub"
 
 echo "✅ All uploads complete."
 cd ~/boats_dataset_processing

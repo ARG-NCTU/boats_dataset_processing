@@ -34,6 +34,7 @@ class Setting():
                     print(f"Failed to load image: {img_path}")
             except Exception as e:
                 print(f"Error loading image {img_path}: {e}")
+                return None
         return images
 
     def split_image_into_thirds(self, image):
@@ -48,6 +49,8 @@ class Setting():
 
     def file_setting(self, start, end, suffix=None):
         all_images = self.load_images(start, end, suffix=suffix)
+        if all_images is None:
+            return None, None, None, None
 
         if not all_images:
             print(f"No valid images loaded for batch {start} to {end}.")
@@ -172,7 +175,7 @@ class Stitcher():
                 # Save the homography matrix if a path is provided and it was newly computed
                 if save_H_path is not None and H is not None:
                     np.save(save_H_path, H)
-                    # print(f"Homography matrix saved at {save_H_path}")
+                    print(f"Homography matrix saved at {save_H_path}")
             # else:
             #     print("Using provided homography matrix.")
 
@@ -201,7 +204,8 @@ class Stitcher():
 
             # print('Cropping Result...')
             cropping_start = time.time()
-            cropped_result = self.remove_black_border(blended)
+            cropped_result = blended
+            # cropped_result = self.remove_black_border(blended)
             # print(f'Cropping took {time.time() - cropping_start:.2f} seconds.')
 
             return cropped_result
@@ -238,6 +242,8 @@ def process_in_batches(batch_size, total_images, setting, intermediate_dir, homo
         # print(f"Processing batch {batch_start + 1} to {batch_end}")
 
         left_images, base_images, right_images, output_images_dir = setting.file_setting(batch_start + 1, batch_end, args.suffix)
+        if left_images is None or base_images is None or right_images is None or output_images_dir is None:
+            continue
 
         num_images = min(len(left_images), len(base_images), len(right_images))
         if num_images == 0:
@@ -250,9 +256,9 @@ def process_in_batches(batch_size, total_images, setting, intermediate_dir, homo
                 #       f"Left({left_images[i].shape}), "
                 #       f"Base({base_images[i].shape}), "
                 #       f"Right({right_images[i].shape})")
-
-                H1 = np.load(args.h1_path) if args.h1_path and os.path.exists(args.h1_path) else None
-                H2 = np.load(args.h2_path) if args.h2_path and os.path.exists(args.h2_path) else None
+                
+                H1 = np.load(args.h1_path) if args.h1_path is not None and os.path.exists(args.h1_path) else None
+                H2 = np.load(args.h2_path) if args.h2_path is not None and os.path.exists(args.h2_path) else None
 
                 img_left = cv2.flip(base_images[i], 1)
                 img_right = cv2.flip(left_images[i], 1)
@@ -304,7 +310,7 @@ def main(args):
         os.makedirs(intermediate_dir, exist_ok=True)
         os.makedirs(homography_dir, exist_ok=True)
     
-    batch_size = 5
+    batch_size = 1
     process_in_batches(batch_size, total_images, setting, intermediate_dir, homography_dir, args, stitcher)
     
     # Create video from stitched images

@@ -56,7 +56,7 @@ def anno_id_shift(dataset, anno_shift):
         annotation['id'] += anno_shift
     return dataset
 
-def split_dataset(dataset, val_ratio=0.2, batch_size=10000, seed=1234):
+def split_dataset(dataset, val_ratio=0.2, test_ratio=None, batch_size=10000, seed=1234):
     random.seed(seed)
 
     # Create a dictionary for fast image_id lookup
@@ -66,16 +66,28 @@ def split_dataset(dataset, val_ratio=0.2, batch_size=10000, seed=1234):
     indices = np.arange(len(dataset['images']))
     np.random.shuffle(indices)
 
-    # Determine the number of validation images
-    num_val = int(len(indices) * val_ratio)
+    if test_ratio is not None:
+        # Determine the number of test images
+        num_test = int(len(indices) * test_ratio)
+        num_val = int((len(indices) - num_test) * val_ratio)
+        num_train = len(indices) - num_val - num_test
+    else:
+        num_val = int(len(indices) * val_ratio)
+        num_train = len(indices) - num_val
 
-    # Split the indices into training and validation
-    val_indices = set(indices[:num_val])
-    train_indices = set(indices[num_val:])
+    train_indices = indices[:num_train]
+    if test_ratio is not None:
+        num_train_val = num_train + num_val
+        val_indices = indices[num_train:num_train_val]
+        test_indices = indices[num_train_val:]
+    else:
+        val_indices = indices[num_train:]
+        test_indices = []
 
     # Filter images in batches
     train_images = []
     val_images = []
+    test_images = []
 
     for i in tqdm(range(0, len(dataset['images']), batch_size), desc="Processing images in batches"):
         batch = dataset['images'][i:i + batch_size]
@@ -84,10 +96,13 @@ def split_dataset(dataset, val_ratio=0.2, batch_size=10000, seed=1234):
                 train_images.append(image)
             elif idx in val_indices:
                 val_images.append(image)
+            elif idx in test_indices:
+                test_images.append(image)
 
     # Filter annotations in batches
     train_annotations = []
     val_annotations = []
+    test_annotations = []
 
     for i in tqdm(range(0, len(dataset['annotations']), batch_size), desc="Processing annotations in batches"):
         batch = dataset['annotations'][i:i + batch_size]
@@ -99,6 +114,8 @@ def split_dataset(dataset, val_ratio=0.2, batch_size=10000, seed=1234):
                     train_annotations.append(anno)
                 elif image_idx in val_indices:
                     val_annotations.append(anno)
+                elif image_idx in test_indices:
+                    test_annotations.append(anno)
 
     # Build the datasets
     train_dataset = {
@@ -113,7 +130,66 @@ def split_dataset(dataset, val_ratio=0.2, batch_size=10000, seed=1234):
         'categories': dataset['categories']
     }
 
-    return train_dataset, val_dataset
+    test_dataset = {
+        'images': test_images,
+        'annotations': test_annotations,
+        'categories': dataset['categories']
+    }
+
+    if test_ratio is not None:
+        return train_dataset, val_dataset, test_dataset
+    else:
+        return train_dataset, val_dataset
+    
+
+    # # Determine the number of validation images
+    # num_val = int(len(indices) * val_ratio)
+
+    # # Split the indices into training and validation
+    # val_indices = set(indices[:num_val])
+    # train_indices = set(indices[num_val:])
+
+    # # Filter images in batches
+    # train_images = []
+    # val_images = []
+
+    # for i in tqdm(range(0, len(dataset['images']), batch_size), desc="Processing images in batches"):
+    #     batch = dataset['images'][i:i + batch_size]
+    #     for idx, image in enumerate(batch):
+    #         if idx in train_indices:
+    #             train_images.append(image)
+    #         elif idx in val_indices:
+    #             val_images.append(image)
+
+    # # Filter annotations in batches
+    # train_annotations = []
+    # val_annotations = []
+
+    # for i in tqdm(range(0, len(dataset['annotations']), batch_size), desc="Processing annotations in batches"):
+    #     batch = dataset['annotations'][i:i + batch_size]
+    #     for anno in batch:
+    #         image_id = anno['image_id']
+    #         if image_id in image_id_to_index:
+    #             image_idx = image_id_to_index[image_id]
+    #             if image_idx in train_indices:
+    #                 train_annotations.append(anno)
+    #             elif image_idx in val_indices:
+    #                 val_annotations.append(anno)
+
+    # # Build the datasets
+    # train_dataset = {
+    #     'images': train_images,
+    #     'annotations': train_annotations,
+    #     'categories': dataset['categories']
+    # }
+
+    # val_dataset = {
+    #     'images': val_images,
+    #     'annotations': val_annotations,
+    #     'categories': dataset['categories']
+    # }
+
+    # return train_dataset, val_dataset
 
 def merge_datasets(dataset1, dataset2):
     merged_dataset = {
