@@ -337,10 +337,11 @@ def process_unity_rgb_dataset(unity_dataset_dir, output_dir):
 
     ############################## Split datasets ##############################
     # Split virtual dataset into train and validation sets
-    virtual_train_rv, virtual_val_rv = split_dataset(virtual_dataset_rgb, val_ratio=0.2)
+    virtual_train_rv, virtual_val_rv, virtual_test_rv = split_dataset(virtual_dataset_rgb, val_ratio=0.2, test_ratio=0.1)
 
     print('rv splitted train num: ', len(virtual_train_rv['images']))
     print('rv splitted val num: ', len(virtual_val_rv['images']))
+    print('rv splitted test num: ', len(virtual_test_rv['images']))
 
     ############################## Merge and save datasets ##############################
     os.makedirs(output_dir, exist_ok=True)
@@ -351,18 +352,23 @@ def process_unity_rgb_dataset(unity_dataset_dir, output_dir):
         shutil.rmtree(f'{output_dir}/train2024')
     if os.path.exists(f'{output_dir}/val2024'):
         shutil.rmtree(f'{output_dir}/val2024')
+    if os.path.exists(f'{output_dir}/test2024'):
+        shutil.rmtree(f'{output_dir}/test2024')
     os.makedirs(f'{output_dir}/images', exist_ok=True)
     os.makedirs(f'{output_dir}/train2024', exist_ok=True)
     os.makedirs(f'{output_dir}/val2024', exist_ok=True)
+    os.makedirs(f'{output_dir}/test2024', exist_ok=True)
     # Save only virtual RGB dataset
     save_json(virtual_train_rv, f'{output_dir}/annotations/instances_train2024.json')
     save_json(virtual_val_rv, f'{output_dir}/annotations/instances_val2024.json')
+    save_json(virtual_test_rv, f'{output_dir}/annotations/instances_test2024.json')
 
     ############################## Copy images to output directories ##############################
     # Copy images for both merged datasets to appropriate directories
     copy_images(virtual_train_rv['images'], [f'{unity_dataset_dir}/rgb_images/'], f'{output_dir}/images/')
     copy_images(virtual_val_rv['images'], [f'{unity_dataset_dir}/rgb_images/'], f'{output_dir}/train2024/')
     copy_images(virtual_val_rv['images'], [f'{unity_dataset_dir}/rgb_images/'], f'{output_dir}/val2024/')
+    copy_images(virtual_test_rv['images'], [f'{unity_dataset_dir}/rgb_images/'], f'{output_dir}/test2024/')
 
 # Main function using argparse for command-line arguments
 def main():
@@ -390,3 +396,4 @@ if __name__ == '__main__':
 # python3 merge_real_virtual.py --unity_dataset_dir Boat_dataset_unity/Boats --real_dataset_dir real_boat_dataset --output_dir Boat_dataset
 # python3 merge_real_virtual.py --unity_rgb_only --unity_dataset_dir Boat_dataset_unity/Lifebuoy --output_dir Lifebuoy_dataset
 # python3 merge_real_virtual.py --unity_rgb_only --unity_dataset_dir Boat_dataset_unity/Boats --output_dir Boat_dataset
+# python3 merge_real_virtual.py --unity_rgb_only --unity_dataset_dir Boat_dataset_unity/Boats1-22 --output_dir Boat_unity_dataset

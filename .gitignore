@@ -82,3 +82,10 @@ logs/
 
 output/
 bags/
+
+rgb_images/
+rgb_images_example/
+coco_formatted_unity_rgb_data.json
+coco_formatted_unity_thermal_data.json
+coco_formatted_unity_rgb_data_example.json
+coco_formatted_unity_thermal_data_example.json
