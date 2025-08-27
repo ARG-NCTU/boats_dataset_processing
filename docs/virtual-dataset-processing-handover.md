@@ -44,17 +44,14 @@ Enter directory for unity dataset processing:
 cd ~/boats_dataset_processing/Boat_dataset_unity
 ```
 
-For prepare your data, follow this guide:
-[docs/virtual-dataset-processing-stitching.md](https://github.com/ARG-NCTU/boats_dataset_processing/blob/main/docs/virtual-dataset-processing-stitching.md)
-
-Or just download all stitched images and segmentations:
+Download all example stitched images and segmentations:
 ```bash
 mkdir -p Images
 cd Images
-wget ftp://140.113.148.83/arg-projectfile-download/unity_dataset/unity_stitched_data/boats1-13.zip
+wget ftp://140.113.148.83/arg-projectfile-download/unity_dataset/unity_stitched_data_scene1/boats1-13.zip
 unzip boats1-13.zip
 rm boats1-13.zip
-wget ftp://140.113.148.83/arg-projectfile-download/unity_dataset/unity_stitched_data/boats14-22.zip
+wget ftp://140.113.148.83/arg-projectfile-download/unity_dataset/unity_stitched_data_scene1/boats14-22.zip
 unzip boats14-22.zip
 rm boats14-22.zip
 cd ..
@@ -117,68 +114,69 @@ Enter directory for unity dataset processing:
 cd ~/boats_dataset_processing
 ```
 
-(Merge real & converted virtual dataset, if add --real_dataset_dir arg) & Split COCO train/val/test annotations
+Split COCO train/val/test annotations
 ```bash
 python3 merge_real_virtual.py \
 --unity_rgb_only \
 --unity_dataset_dir Boat_dataset_unity/Boats1-22 \
---output_dir Boat_unity_dataset
+--output_dir Boat_unity_example
 ```
 
 Simple annotations for statistic analysis:
 ```bash
 python3 statistic_class_simple.py \
---train_json Boat_unity_dataset/annotations/instances_train2024.json \
---val_json Boat_unity_dataset/annotations/instances_val2024.json \
---test_json Boat_unity_dataset/annotations/instances_test2024.json
+--train_json Boat_unity_example/annotations/instances_train2024.json \
+--val_json Boat_unity_example/annotations/instances_val2024.json \
+--test_json Boat_unity_example/annotations/instances_test2024.json
 ```
 
 Example output:
 ```bash
 --------------------------------------------------
 Total number of classes: 9
-Total number of images: 39775
-Training images: 27704 (69.65%)
-Validation images: 7949 (19.98%)
-Test images: 4122 (10.36%)
-Total number of annotations: 429119
-Training annotations: 300345 (69.99%)
-Validation annotations: 85885 (20.01%)
-Test annotations: 42889 (9.99%)
-Average annotations per training image: 10.841214265088073
-Average annotations per validation image: 10.804503711158636
-Average annotations per test image: 10.404900533721495
+Total number of images: 7996
+Training images: 5598 (70.01%)
+Validation images: 1599 (20.00%)
+Test images: 799 (9.99%)
+Total number of annotations: 86318
+Training annotations: 60517 (70.11%)
+Validation annotations: 17114 (19.83%)
+Test annotations: 8687 (10.06%)
+Average annotations per training image: 10.81046802429439
+Average annotations per validation image: 10.70293933708568
+Average annotations per test image: 10.872340425531915
 --------------------------------------------------
 Class Name            Train Annotations    Validation Annotations    Test Annotations
 --------------------------------------------------
-WAM_V                13362                3825                 1910                
-Hovercraft           39041                11137                5564                
-Yacht                102625               29218                14635               
-CargoShip            13851                3936                 1980                
-WorkBoat             13795                3914                 1972                
-Blueboat             11341                3276                 1633                
-MilitaryShip         69492                19994                9946                
-CoastGuardShip       26741                7678                 3825                
-Buoy                 10097                2907                 1424                
+WAM_V                2718                 734                  400                 
+Hovercraft           7884                 2200                 1140                
+Yacht                20798                5689                 3045                
+CargoShip            2811                 764                  411                 
+WorkBoat             2798                 761                  409                 
+Blueboat             2316                 621                  337                 
+MilitaryShip         13841                4153                 1932                
+CoastGuardShip       5333                 1593                 740                 
+Buoy                 2018                 599                  273                 
 Class statistics saved to class_statistics.csv
 ```
 
 Copy classes txt file:
 ```bash
-cp Boat_dataset_unity/Boats1-22/classes.txt Boat_unity_dataset/annotations/
+cp Boat_dataset_unity/Boats1-22/classes.txt Boat_unity_example/annotations/
 ```
 
 ### 3. Convert COCO format to HuggingFace dataset format
 Convert to HuggingFace dataset format:
 ```bash
 python3 coco2jsonl.py \
---input_dir Boat_unity_dataset/annotations \
---image_dir Boat_unity_dataset/images \
---output_dir Boat_unity_dataset_hf/annotations
+--input_dir Boat_unity_example/annotations \
+--image_dir Boat_unity_example/images \
+--output_dir Boat_unity_example_hf/annotations
 ```
 
 
 ### 4. Upload HuggingFace dataset
 ```bash
-source upload_hf.sh ARG-NCTU/Boat_unity_dataset ARG-NCTU/Boat_unity_dataset_coco Boat_unity_dataset Boat_unity_dataset_hf jsonl
+source upload_hf.sh zhuchi76/Boat_unity_example zhuchi76/Boat_unity_example_coco Boat_unity_example Boat_unity_example_hf jsonl
 ```
+Replace with your huggingface account name.
