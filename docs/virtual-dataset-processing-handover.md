@@ -180,3 +180,12 @@ python3 coco2jsonl.py \
 source upload_hf.sh zhuchi76/Boat_unity_example zhuchi76/Boat_unity_example_coco Boat_unity_example Boat_unity_example_hf jsonl
 ```
 Replace with your huggingface account name.
+
+Final HuggingFace Dataset Website:
+- HuggingFace Format
+
+![image](example/unity-huggingFace-format-example-web.png)
+
+- COCO Format
+
+![image](example/unity-coco-format-example-web.png)
