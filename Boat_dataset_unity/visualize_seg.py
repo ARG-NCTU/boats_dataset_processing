@@ -53,7 +53,10 @@ def main(args):
 if __name__ == "__main__":
     
     parser = argparse.ArgumentParser(description="Visualize segmentation image")
-    parser.add_argument("seg_image_path", type=str, default="./Images/boats7-13/Scene1/62_seg.png", help="Path to the segmentation image")
+    parser.add_argument("--seg_image_path", type=str, default="./Images/boats7-13/Scene1/62_seg.png", help="Path to the segmentation image")
 
     args = parser.parse_args()
     main(args)
+
+# Usage:
+# python3 visualize_seg.py --seg_image_path ./Images/boats1-13/Scene1/1969_seg.png
