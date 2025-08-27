@@ -13,4 +13,10 @@ This repo is used for
 
 [docs/virtual-dataset-processing.md](https://github.com/ARG-NCTU/boats_dataset_processing/blob/main/docs/virtual-dataset-processing.md)
 
-<img src="docs/example/multiboat-bbox.png" alt="virtual-dataset" width="600" height="auto" />
+- Segmentation annotations image
+
+<img src="docs/example/seg_image_stitched.png" alt="virtual-dataset-seg" width="600" height="auto" />
+
+- Source image with bbox annotations
+
+<img src="docs/example/boats1-13_scene1_1969_anno.png" alt="virtual-dataset-anno" width="600" height="auto" />
