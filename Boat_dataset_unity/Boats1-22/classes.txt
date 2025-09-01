@@ -1,0 +1,9 @@
+WAM_V
+Hovercraft
+Yacht
+CargoShip
+WorkBoat
+Blueboat
+MilitaryShip
+CoastGuardShip
+Buoy

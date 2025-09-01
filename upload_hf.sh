@@ -8,32 +8,48 @@ DATASET_HF_REPO="${1:-ARG-NCTU/TW_Marine_2cls_dataset}"
 DATASET_COCO_REPO="${2:-ARG-NCTU/TW_Marine_2cls_dataset_coco}"
 DATASET_DIR="${3:-TW_Marine_2cls_dataset}"
 DATASET_HF_DIR="${4:-TW_Marine_2cls_dataset_hf}"
+FORMAT="${5:-parquet}"   # default parquet，can change to jsonl
 
 echo "🛠 Using configuration:"
 echo "  DATASET_HF_REPO   = $DATASET_HF_REPO"
 echo "  DATASET_COCO_REPO = $DATASET_COCO_REPO"
 echo "  DATASET_DIR       = $DATASET_DIR"
 echo "  DATASET_HF_DIR    = $DATASET_HF_DIR"
+echo "  FORMAT            = $FORMAT"
 
 # === Login ===
 echo "🔑 Logging into Hugging Face..."
 huggingface-cli login --token "$HUGGINGFACE_TOKEN"
 
-# === Upload HF parquet dataset ===
-echo "⬆️ Uploading Parquet-based dataset to $DATASET_HF_REPO..."
+# === Upload HF dataset (labels) ===
+echo "⬆️ Uploading $FORMAT-based dataset to $DATASET_HF_REPO..."
 cd ~/boats_dataset_processing/"$DATASET_HF_DIR"
 
-huggingface-cli upload "$DATASET_HF_REPO" annotations/instances_train2024.parquet data/instances_train2024.parquet \
-  --repo-type=dataset \
-  --commit-message="Upload training labels to hub"
+if [ "$FORMAT" = "jsonl" ]; then
+  huggingface-cli upload "$DATASET_HF_REPO" annotations/instances_train2024.jsonl data/instances_train2024.jsonl \
+    --repo-type=dataset \
+    --commit-message="Upload training labels (jsonl) to hub"
 
-huggingface-cli upload "$DATASET_HF_REPO" annotations/instances_val2024.parquet data/instances_val2024.parquet \
-  --repo-type=dataset \
-  --commit-message="Upload val labels to hub"
+  huggingface-cli upload "$DATASET_HF_REPO" annotations/instances_val2024.jsonl data/instances_val2024.jsonl \
+    --repo-type=dataset \
+    --commit-message="Upload val labels (jsonl) to hub"
 
-huggingface-cli upload "$DATASET_HF_REPO" annotations/instances_test2024.parquet data/instances_test2024.parquet \
-  --repo-type=dataset \
-  --commit-message="Upload test labels to hub"
+  huggingface-cli upload "$DATASET_HF_REPO" annotations/instances_test2024.jsonl data/instances_test2024.jsonl \
+    --repo-type=dataset \
+    --commit-message="Upload test labels (jsonl) to hub"
+else
+  huggingface-cli upload "$DATASET_HF_REPO" annotations/instances_train2024.parquet data/instances_train2024.parquet \
+    --repo-type=dataset \
+    --commit-message="Upload training labels (parquet) to hub"
+
+  huggingface-cli upload "$DATASET_HF_REPO" annotations/instances_val2024.parquet data/instances_val2024.parquet \
+    --repo-type=dataset \
+    --commit-message="Upload val labels (parquet) to hub"
+
+  huggingface-cli upload "$DATASET_HF_REPO" annotations/instances_test2024.parquet data/instances_test2024.parquet \
+    --repo-type=dataset \
+    --commit-message="Upload test labels (parquet) to hub"
+fi
 
 # === Upload COCO dataset ===
 echo "⬆️ Uploading COCO-format dataset to $DATASET_COCO_REPO..."

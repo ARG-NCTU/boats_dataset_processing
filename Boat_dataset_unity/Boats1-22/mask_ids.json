@@ -1,0 +1,29 @@
+{
+    "boats1-13" : {
+        "WAM_V": 10,
+        "Boat": 20,
+        "BigBoat": 30,
+        "SailBoat": 40,
+        "BallonBoat": 50,
+        "JetSki": 60,
+        "Katamaran": 70,
+        "SmallBoat": 80,
+        "SpeedBoat": 90,
+        "container_ship": 100,
+        "TugShip": 110,
+        "yacht": 120,
+        "blueboat": 130
+    },
+    "boats14-22" : {
+        "Mark_V": 10,
+        "CV16_Liaoning_AirWing": 20,
+        "Haizhou136": 30,
+        "Type022_Houbei_FAC": 40,
+        "Jiangwei_T053_FFG": 50,
+        "tj": 60,
+        "tj2": 70,
+        "Uncrewed_Surface_Vehicle": 80,
+        "Zodiac_military": 90,
+        "Buoy": 100
+    }
+}

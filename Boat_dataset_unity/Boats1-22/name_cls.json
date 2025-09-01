@@ -1,0 +1,29 @@
+{
+    "boats1-13" : {
+        "WAM_V": "WAM_V",
+        "Boat": "Hovercraft",
+        "BigBoat": "Yacht",
+        "SailBoat": "Yacht",
+        "BallonBoat": "Hovercraft",
+        "JetSki": "Yacht",
+        "Katamaran": "Yacht",
+        "SmallBoat": "Yacht",
+        "SpeedBoat": "Yacht",
+        "container_ship": "CargoShip",
+        "TugShip": "WorkBoat",
+        "yacht": "Yacht",
+        "blueboat": "Blueboat"
+    },
+    "boats14-22" : {
+        "Mark_V": "MilitaryShip",
+        "CV16_Liaoning_AirWing": "MilitaryShip",
+        "Haizhou136": "MilitaryShip",
+        "Type022_Houbei_FAC": "MilitaryShip",
+        "Jiangwei_T053_FFG": "MilitaryShip",
+        "tj": "CoastGuardShip",
+        "tj2": "CoastGuardShip",
+        "Uncrewed_Surface_Vehicle": "Yacht",
+        "Zodiac_military": "Hovercraft",
+        "Buoy": "Buoy"
+    }
+}

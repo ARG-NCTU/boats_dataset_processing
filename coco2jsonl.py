@@ -50,15 +50,15 @@ def convert_json_to_jsonl(json_data, image_dir, output_jsonl_path, batch_size=10
                         outfile.write(json.dumps(prev_jsonl_line) + '\n')
 
                     image_name = image_id_to_image[image_id]["file_name"]
-                    image = Image.open(f'{image_dir}/{image_name}')
-                    image = b64encode(np.array(image).tobytes()).decode('utf-8')
+                    # image = Image.open(f'{image_dir}/{image_name}')
+                    # image = b64encode(np.array(image).tobytes()).decode('utf-8')
                     print(f"Image ID: {image_id}, Image Name: {image_name}")
                     image_width = int(image_id_to_image[image_id]["width"])
                     image_height = int(image_id_to_image[image_id]["height"])
                     # Create a new jsonl line for the new image
                     jsonl_line = {
                         "image_id": image_id,
-                        "image": image,
+                        # "image": image,
                         "image_path": f'images/{image_name}',
                         "width": image_width,
                         "height": image_height,
@@ -138,3 +138,5 @@ if __name__ == '__main__':
 # python3 coco2jsonl.py --input_dir Boat_dataset/annotations --output_dir Boat_dataset_hf/annotations
 # python3 coco2jsonl.py --input_dir Lifebuoy_dataset/annotations --image_dir Lifebuoy_dataset/images --output_dir Lifebuoy_dataset_hf/annotations
 # python3 coco2jsonl.py --input_dir real_lifebuoy_dataset/annotations --output_dir real_lifebuoy_dataset_hf/annotations
+
+# python3 coco2jsonl.py --input_dir Boat_unity_dataset/annotations --image_dir Boat_unity_dataset/images --output_dir Boat_unity_dataset_hf/annotations
