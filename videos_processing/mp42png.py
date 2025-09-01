@@ -15,7 +15,7 @@ def convert_mp4_to_png(input_dir, output_dir):
     
     # Convert all MP4 files in the input directory
     for file in tqdm(os.listdir(input_dir), desc="Converting MP4 to PNG", leave=False):
-        if file.endswith(".MOV") or file.endswith(".mp4"):
+        if file.endswith(".MOV") or file.endswith(".mp4") or file.endswith(".MP4"):
             file_name = file.split(".")[0]
             os.makedirs(f"{output_dir}/{file_name}", exist_ok=True)
             video = cv2.VideoCapture(os.path.join(input_dir, file))
@@ -24,7 +24,7 @@ def convert_mp4_to_png(input_dir, output_dir):
             img_count = 1
             total_frames = int(video.get(cv2.CAP_PROP_FRAME_COUNT))
             dismiss = 0
-            max_dismiss = 7.5
+            max_dismiss = 29.97
             while success:
                 if dismiss < max_dismiss:
                     dismiss += 1
