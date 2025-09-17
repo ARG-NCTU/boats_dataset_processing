@@ -237,3 +237,17 @@ Upload HuggingFace dataset
 ```bash
 source upload_hf.sh ARG-NCTU/TW_Marine_5cls_dataset ARG-NCTU/TW_Marine_5cls_dataset_coco TW_Marine_5cls_dataset TW_Marine_5cls_dataset_hf
 ```
+
+Download HuggingFace dataset
+
+```bash
+source download_hf.sh ARG-NCTU/TW_Marine_5cls_dataset ARG-NCTU/TW_Marine_5cls_dataset_coco TW_Marine_5cls_dataset TW_Marine_5cls_dataset_hf
+```
+
+Simple annotations for statistic analysis:
+```bash
+python3 statistic_class_simple.py \
+--train_json TW_Marine_5cls_dataset/annotations/instances_train2024.json \
+--val_json TW_Marine_5cls_dataset/annotations/instances_val2024.json \
+--test_json TW_Marine_5cls_dataset/annotations/instances_test2024.json
+```
