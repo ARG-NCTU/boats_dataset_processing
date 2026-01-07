@@ -88,4 +88,4 @@ rgb_images_example/
 coco_formatted_unity_rgb_data.json
 coco_formatted_unity_thermal_data.json
 coco_formatted_unity_rgb_data_example.json
-coco_formatted_unity_thermal_data_example.json
+coco_formatted_unity_thermal_data_example.jsonsam3_hil/models/*.pt
