@@ -24,7 +24,7 @@ def convert_mp4_to_png(input_dir, output_dir):
             img_count = 1
             total_frames = int(video.get(cv2.CAP_PROP_FRAME_COUNT))
             dismiss = 0
-            max_dismiss = 29.97
+            max_dismiss = 60
             while success:
                 if dismiss < max_dismiss:
                     dismiss += 1

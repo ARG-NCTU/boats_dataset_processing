@@ -660,21 +660,21 @@ if __name__ == "__main__":
 #   --debug \
 #   --visualize_region
 
-# python3 paste_n_label.py \
-#   --object_png sonar/_artifacts/object_cutout2.png \
-#   --original_json sonar/20251029062806/20251029062806_669.json \
-#   --image_dir sonar/all2 \
-#   --output_dir sonar/augmented2 \
-#   --num_samples 250 \
-#   --region 40,105,560,255 \
-#   --format all \
-#   --max_rotation 60 \
-#   --scale_min 0.9 \
-#   --scale_max 1.1
-#   --copy_remaining \
-#   --create_empty_labels
+python3 paste_n_label.py \
+  --object_png sonar/_artifacts/object_cutout2.png \
+  --original_json sonar/20251029062806/20251029062806_669.json \
+  --image_dir sonar/all2 \
+  --output_dir sonar/augmented2 \
+  --num_samples 250 \
+  --region 40,105,560,255 \
+  --format all \
+  --max_rotation 60 \
+  --scale_min 0.9 \
+  --scale_max 1.1
+  --copy_remaining \
+  --create_empty_labels
 
-# python3 paste_and_label.py \
+# python3 paste_n_label.py \
 #   --object_png sonar/_artifacts/object_cutout.png \
 #   --original_json sonar/20251029062806/20251029062806_670.json \
 #   --image_dir sonar/all \

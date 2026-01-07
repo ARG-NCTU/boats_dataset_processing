@@ -103,9 +103,9 @@ def crop_video(cap, output_path, json_path):
 # 主程式
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="Process a video to show various processing results in quadrants.")
-    parser.add_argument('-i', '--input', type=str, default="TaichungPort/IMG_2550(1).MOV", help='Path to the input video file')
-    parser.add_argument('-o', '--output', type=str, default="TaichungPort/IMG_2550(1)-output.MOV", help='Path to the output cropped video file')
-    parser.add_argument('-j', '--json', type=str, default="TaichungPort/IMG_2550(1).json", help='Path to the output cropped info file')
+    parser.add_argument('-i', '--input', type=str, default="sonar/20251028051742.mp4", help='Path to the input video file')
+    parser.add_argument('-o', '--output', type=str, default="sonar/20251028051742-output.mp4", help='Path to the output cropped video file')
+    parser.add_argument('-j', '--json', type=str, default="sonar/20251028051742.json", help='Path to the output cropped info file')
     args = parser.parse_args()
 
     cap = cv2.VideoCapture(args.input)
