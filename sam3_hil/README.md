@@ -3,7 +3,7 @@
 > **Efficiency-Driven Semi-Automated Data Engine:**  
 > Leveraging SAM 3 Presence Confidence for Maritime Video Annotation
 
-[![Python](https://img.shields.io/badge/Python-3.11-blue.svg)](https://www.python.org/)
+[![Python](https://img.shields.io/badge/Python-3.12-blue.svg)](https://www.python.org/)
 [![PyQt6](https://img.shields.io/badge/GUI-PyQt6-green.svg)](https://www.riverbankcomputing.com/software/pyqt/)
 [![SAM 3](https://img.shields.io/badge/Model-SAM%203-orange.svg)](https://github.com/facebookresearch/sam3)
 
@@ -27,35 +27,58 @@ This system transforms annotation from a labor-intensive process into an efficie
 
 - Docker with NVIDIA Container Toolkit (for GPU support)
 - X11 display server (Linux) or XQuartz (macOS)
+- HuggingFace account with SAM 3 access
+
+### Clone Repository
+
+```bash
+# Clone with submodules (recommended)
+git clone --recursive git@github.com:ARG-NCTU/boats_dataset_processing.git
+
+# Or if already cloned, initialize submodules
+cd boats_dataset_processing
+git submodule update --init --recursive
+```
+
+### HuggingFace Setup
+
+SAM 3 model requires HuggingFace authentication:
+
+1. Get your token from: https://huggingface.co/settings/tokens
+2. Request access to SAM 3 model: https://huggingface.co/facebook/sam3
+3. Set environment variable:
+
+```bash
+# Add to ~/.bashrc (permanent)
+echo 'export HF_TOKEN="hf_your_token_here"' >> ~/.bashrc
+source ~/.bashrc
+```
 
 ### Build & Run
 
 ```bash
-# Clone the repository
-cd boat_dataset_processing/sam3_hil
+cd sam3_hil
 
 # Build Docker image
-./docker/run_docker.sh build
+./docker/docker_run.sh build
 
-# Run the application
-./docker/run_docker.sh run
-
-# Run with mock SAM 3 (no GPU needed)
-./docker/run_docker.sh run python main.py --mock
+# Run interactive shell
+./docker/docker_run.sh shell
 
 # Run tests
-./docker/run_docker.sh test
-
-# Interactive shell
-./docker/run_docker.sh shell
+./docker/docker_run.sh test
 ```
 
-### Test X11 & GPU
+### Demo
 
 ```bash
-# Inside container
-python main.py test-x11    # Test X11 display
-python main.py test-gpu    # Test CUDA availability
+# Inside container - extract a frame from video
+ffmpeg -i /app/third_party/sam3/assets/videos/bedroom.mp4 -vframes 1 /app/data/output/bedroom_frame.jpg
+
+# Run SAM 3 image demo
+python /app/src/demo.py --image /app/data/output/bedroom_frame.jpg --prompt "bed"
+
+# Output saved to: /app/data/output/
 ```
 
 ## 📁 Project Structure
@@ -64,9 +87,9 @@ python main.py test-gpu    # Test CUDA availability
 sam3_hil/
 ├── docker/
 │   ├── Dockerfile          # Container definition
-│   └── run_docker.sh       # Launch script with X11 forwarding
+│   └── docker_run.sh       # Launch script with X11 forwarding
 ├── src/
-│   ├── config.py           # All configurable parameters
+│   ├── demo.py             # SAM 3 demo script
 │   ├── core/               # Backend modules
 │   │   ├── video_loader.py
 │   │   ├── horizon_detector.py
@@ -80,18 +103,24 @@ sam3_hil/
 │   │   └── control_panel.py
 │   └── utils/
 │       └── export_manager.py
+├── configs/
+│   └── config.py           # All configurable parameters
 ├── tests/
-├── data/                   # Input videos (gitignored)
-├── models/                 # SAM 3 checkpoints (gitignored)
-├── output/                 # Exported annotations
-├── main.py                 # Entry point
+├── data/
+│   ├── image/              # Input images
+│   ├── video/              # Input videos
+│   ├── bag/                # Input rosbags
+│   └── output/             # Exported annotations
+├── models/                 # Model cache (gitignored)
+├── third_party/
+│   └── sam3/               # SAM 3 submodule
 ├── requirements.txt
-└── .env.example            # Environment variable template
+└── README.md
 ```
 
 ## ⚙️ Configuration
 
-All parameters are centralized in `src/config.py`. Override via environment variables:
+All parameters are centralized in `configs/config.py`. Override via environment variables:
 
 ```bash
 # .env file or export directly
@@ -137,6 +166,26 @@ export HIL_SAM3_MOCK_MODE=true         # Development mode
 4. **Interactive Refinement**: Simple click corrections, not polygon editing
 5. **Maritime ROI**: Horizon detection reduces sky false positives
 6. **Optimized GUI**: Color-coded timeline + keyboard shortcuts
+
+## ⚠️ Troubleshooting
+
+### Submodule is empty
+```bash
+git submodule update --init --recursive
+```
+
+### HuggingFace authentication error
+```bash
+# Check if token is set
+echo $HF_TOKEN
+
+# Or login manually inside container
+huggingface-cli login
+```
+
+### CUDA out of memory
+- Use image mode instead of video mode (RTX 4070 8GB limitation)
+- Reduce batch size in config
 
 ## 📚 References
 
