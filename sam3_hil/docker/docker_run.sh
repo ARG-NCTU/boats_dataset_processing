@@ -101,14 +101,15 @@ case "$CMD" in
             $GPU_FLAG \
             -e DISPLAY="$DISPLAY" \
             -e QT_X11_NO_MITSHM=1 \
+            -e HF_TOKEN="$HF_TOKEN" \
             -v /tmp/.X11-unix:/tmp/.X11-unix:rw \
             -v "$HOME/.Xauthority:/home/appuser/.Xauthority:rw" \
+            -v "$HOME/.cache/huggingface:/home/appuser/.cache/huggingface:rw" \
             -v "$PROJECT_ROOT/src:/app/src:rw" \
             -v "$PROJECT_ROOT/configs:/app/configs:rw" \
             -v "$PROJECT_ROOT/data:/app/data:rw" \
             -v "$PROJECT_ROOT/tests:/app/tests:rw" \
             -v "$PROJECT_ROOT/models:/app/models:rw" \
-            -v "$PROJECT_ROOT/output:/app/output:rw" \
             -v "$PROJECT_ROOT/third_party:/app/third_party:ro" \
             --network host \
             --ipc host \

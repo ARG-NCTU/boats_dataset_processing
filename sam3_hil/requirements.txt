@@ -58,6 +58,8 @@ isort>=5.12.0
 mypy>=1.5.0
 ruff>=0.0.290
 einops>=0.7.0
+decord>=0.6.0
+psutil>=7.2.1
 
 # -----------------------------------------------------------------------------
 # SAM 3 Dependencies (may be installed via git)
