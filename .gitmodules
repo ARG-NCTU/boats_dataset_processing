@@ -1,9 +1,6 @@
 [submodule "Panorama"]
 	path = Panorama
 	url = git@github.com:ARG-NCTU/Panorama.git
-[submodule "sam3_hil/sam3/sam3"]
-	path = sam3_hil/sam3/sam3
-	url = https://github.com/facebookresearch/sam3.git
 [submodule "sam3_hil/third_party/sam3"]
 	path = sam3_hil/third_party/sam3
 	url = https://github.com/facebookresearch/sam3.git
