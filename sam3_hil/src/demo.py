@@ -9,6 +9,7 @@ Usage:
     python src/demo.py                           # Use default video & prompt
     python src/demo.py --video path/to/video.mp4 --prompt "person"
     python src/demo.py --prompt "bed, pillow"    # Multiple objects
+    python src/demo.py --prompt "bed" --max-frames 0  # Process ALL frames
 """
 
 import argparse
@@ -72,14 +73,47 @@ def run_image_demo(image_path: str, prompt: str, output_dir: str = "output"):
     return masks, boxes, scores
 
 
+def propagate_in_video(predictor, session_id):
+    """Propagate masks through video using streaming API."""
+    outputs_per_frame = {}
+    for response in predictor.handle_stream_request(
+        request=dict(
+            type="propagate_in_video",
+            session_id=session_id,
+        )
+    ):
+        outputs_per_frame[response["frame_index"]] = response["outputs"]
+    return outputs_per_frame
+
+
 def run_video_demo(video_path: str, prompt: str, output_dir: str = "output", max_frames: int = 30):
-    """Run SAM3 on video with text prompt."""
+    """Run SAM3 on video with text prompt.
+    
+    Args:
+        video_path: Path to video file
+        prompt: Text prompt for segmentation
+        output_dir: Output directory
+        max_frames: Maximum frames to process. Use 0 or -1 for ALL frames.
+    """
     from sam3.model_builder import build_sam3_video_predictor
+    
+    # Get total frames first
+    cap = cv2.VideoCapture(video_path)
+    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    cap.release()
+    
+    # Handle max_frames <= 0 as "all frames"
+    if max_frames <= 0:
+        max_frames = total_frames
+        frames_info = f"ALL ({total_frames})"
+    else:
+        frames_info = str(max_frames)
     
     print(f"\n🎬 Video Demo")
     print(f"   Video: {video_path}")
     print(f"   Prompt: '{prompt}'")
-    print(f"   Max frames: {max_frames}")
+    print(f"   Total frames: {total_frames}")
+    print(f"   Max frames to process: {frames_info}")
     
     # Load model
     print("\n⏳ Loading SAM 3 video predictor...")
@@ -113,33 +147,39 @@ def run_video_demo(video_path: str, prompt: str, output_dir: str = "output", max
     
     # Get number of objects found
     if outputs:
-        num_objects = len(outputs.get("obj_ids", []))
+        obj_ids = outputs.get("out_obj_ids", [])
+        num_objects = len(obj_ids)
         print(f"   Found {num_objects} object(s) matching '{prompt}'")
+        print(f"   Object IDs: {obj_ids}")
         
         # Print confidence scores if available
-        if "scores" in outputs:
-            for i, score in enumerate(outputs["scores"]):
+        if "out_probs" in outputs:
+            for i, score in enumerate(outputs["out_probs"]):
                 print(f"   Object {i+1}: confidence = {score:.3f}")
     
-    # Propagate through video
+    # Propagate through video using streaming API
     print(f"\n⏳ Propagating masks through video...")
-    response = video_predictor.handle_request(
+    outputs_per_frame = propagate_in_video(video_predictor, session_id)
+    print(f"✅ Propagation complete! Got {len(outputs_per_frame)} frames")
+    
+    # Close session to free resources
+    video_predictor.handle_request(
         request=dict(
-            type="propagate",
+            type="close_session",
             session_id=session_id,
         )
     )
     
-    all_results = response.get("outputs", {})
-    print(f"✅ Propagation complete!")
-    
     # Save visualization
     Path(output_dir).mkdir(parents=True, exist_ok=True)
-    output_video = Path(output_dir) / f"demo_{Path(video_path).stem}_{prompt.replace(' ', '_')}.mp4"
+    output_video = Path(output_dir) / f"demo_{Path(video_path).stem}_{prompt.replace(' ', '_').replace(',', '')}.mp4"
     
-    visualize_video_results(video_path, all_results, str(output_video), max_frames)
+    visualize_video_results(video_path, outputs_per_frame, str(output_video), max_frames)
     
-    return all_results
+    # Shutdown predictor
+    video_predictor.shutdown()
+    
+    return outputs_per_frame
 
 
 def visualize_image_results(image_path, masks, boxes, scores, prompt, output_dir):
@@ -187,8 +227,15 @@ def visualize_image_results(image_path, masks, boxes, scores, prompt, output_dir
     print(f"\n📁 Saved result to: {output_path}")
 
 
-def visualize_video_results(video_path, results, output_path, max_frames=30):
-    """Save visualization of video segmentation results."""
+def visualize_video_results(video_path, outputs_per_frame, output_path, max_frames=30):
+    """Save visualization of video segmentation results.
+    
+    Args:
+        video_path: Path to input video
+        outputs_per_frame: Dict mapping frame_index -> outputs from SAM3
+        output_path: Path for output video
+        max_frames: Maximum frames to process. Use 0 or -1 for ALL frames.
+    """
     cap = cv2.VideoCapture(video_path)
     
     if not cap.isOpened():
@@ -203,14 +250,29 @@ def visualize_video_results(video_path, results, output_path, max_frames=30):
     
     print(f"\n📹 Video info: {width}x{height} @ {fps}fps, {total_frames} frames")
     
+    # Handle max_frames <= 0 as "all frames"
+    if max_frames <= 0:
+        frames_to_process = total_frames
+    else:
+        frames_to_process = min(max_frames, total_frames)
+    
     # Setup video writer
     fourcc = cv2.VideoWriter_fourcc(*'mp4v')
     out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
     
-    colors = [(0, 255, 0), (255, 0, 0), (0, 0, 255), (255, 255, 0), (255, 0, 255)]
+    # Generate distinct colors for each object
+    colors = [
+        (0, 255, 0),    # Green
+        (255, 0, 0),    # Blue
+        (0, 0, 255),    # Red
+        (255, 255, 0),  # Cyan
+        (255, 0, 255),  # Magenta
+        (0, 255, 255),  # Yellow
+        (128, 0, 255),  # Purple
+        (255, 128, 0),  # Orange
+    ]
     
     frame_idx = 0
-    frames_to_process = min(max_frames, total_frames)
     
     print(f"⏳ Processing {frames_to_process} frames...")
     
@@ -221,13 +283,21 @@ def visualize_video_results(video_path, results, output_path, max_frames=30):
         
         overlay = frame.copy()
         
-        # Get masks for this frame
-        frame_results = results.get(frame_idx, {})
-        masks = frame_results.get("masks", [])
+        # Get outputs for this frame
+        frame_outputs = outputs_per_frame.get(frame_idx, {})
+        
+        # Extract masks and object IDs
+        masks = frame_outputs.get("out_binary_masks", [])
+        obj_ids = frame_outputs.get("out_obj_ids", [])
         
         # Draw masks
         for i, mask in enumerate(masks):
-            color = colors[i % len(colors)]
+            # Assign color based on object ID if available
+            if i < len(obj_ids):
+                color_idx = obj_ids[i] % len(colors)
+            else:
+                color_idx = i % len(colors)
+            color = colors[color_idx]
             
             if torch.is_tensor(mask):
                 mask = mask.cpu().numpy()
@@ -245,9 +315,10 @@ def visualize_video_results(video_path, results, output_path, max_frames=30):
         # Blend
         result = cv2.addWeighted(overlay, 0.4, frame, 0.6, 0)
         
-        # Add frame counter
-        cv2.putText(result, f"Frame: {frame_idx}", (10, 30), 
-                    cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
+        # Add frame counter and object count
+        info_text = f"Frame: {frame_idx}/{frames_to_process} | Objects: {len(masks)}"
+        cv2.putText(result, info_text, (10, 30), 
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
         
         out.write(result)
         frame_idx += 1
@@ -269,12 +340,12 @@ def main():
                         help="Path to video file")
     parser.add_argument("--image", type=str, default=None,
                         help="Path to image file (if provided, runs image demo instead)")
-    parser.add_argument("--prompt", type=str, default="bed",
+    parser.add_argument("--prompt", type=str, default="boy",
                         help="Text prompt for segmentation")
-    parser.add_argument("--output", type=str, default="/app/output",
+    parser.add_argument("--output", type=str, default="/app/data/output",
                         help="Output directory")
-    parser.add_argument("--max-frames", type=int, default=30,
-                        help="Maximum frames to process for video")
+    parser.add_argument("--max-frames", type=int, default=0,
+                        help="Maximum frames to process. Use 0 or -1 for ALL frames.")
     parser.add_argument("--check-only", action="store_true",
                         help="Only check environment, don't run demo")
     
