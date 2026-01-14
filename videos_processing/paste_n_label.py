@@ -659,7 +659,7 @@ if __name__ == "__main__":
 #   --scale_max 1.1 \
 #   --debug \
 #   --visualize_region
-
+'''
 python3 paste_n_label.py \
   --object_png sonar/_artifacts/object_cutout2.png \
   --original_json sonar/20251029062806/20251029062806_669.json \
@@ -673,7 +673,7 @@ python3 paste_n_label.py \
   --scale_max 1.1
   --copy_remaining \
   --create_empty_labels
-
+'''
 # python3 paste_n_label.py \
 #   --object_png sonar/_artifacts/object_cutout.png \
 #   --original_json sonar/20251029062806/20251029062806_670.json \
