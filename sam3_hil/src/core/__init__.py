@@ -13,7 +13,17 @@ from .sam3_engine import (
     SAM3Engine, 
     Detection, 
     FrameResult, 
-    VideoSessionInfo
+    VideoSessionInfo,
+    visualize_frame_results,
+    save_visualization_video,
+)
+from .confidence_analyzer import (
+    ConfidenceAnalyzer,
+    ConfidenceCategory,
+    DetectionAnalysis,
+    FrameAnalysis,
+    VideoAnalysis,
+    ObjectSummary,
 )
 
 __all__ = [
@@ -27,4 +37,13 @@ __all__ = [
     "Detection",
     "FrameResult",
     "VideoSessionInfo",
+    "visualize_frame_results",
+    "save_visualization_video",
+    # confidence_analyzer
+    "ConfidenceAnalyzer",
+    "ConfidenceCategory",
+    "DetectionAnalysis",
+    "FrameAnalysis",
+    "VideoAnalysis",
+    "ObjectSummary",
 ]
