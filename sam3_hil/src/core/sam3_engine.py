@@ -765,6 +765,166 @@ class SAM3Engine:
 
 
 # =============================================================================
+# Visualization Helper
+# =============================================================================
+
+def visualize_frame_results(
+    frame: np.ndarray,
+    result: FrameResult,
+    high_threshold: float = 0.85,
+    low_threshold: float = 0.50
+) -> np.ndarray:
+    """
+    Visualize detection results on a frame with object IDs and confidence scores.
+    
+    Color coding:
+    - GREEN: HIGH confidence (>= high_threshold) - auto accept
+    - YELLOW: UNCERTAIN confidence - needs review
+    - RED: LOW confidence (< low_threshold) - likely false positive
+    
+    Args:
+        frame: Input frame (BGR)
+        result: FrameResult with detections
+        high_threshold: Threshold for HIGH confidence
+        low_threshold: Threshold for LOW confidence
+        
+    Returns:
+        Annotated frame
+    """
+    output = frame.copy()
+    overlay = frame.copy()
+    
+    for det in result.detections:
+        # Determine color based on confidence
+        if det.score >= high_threshold:
+            color = (0, 255, 0)      # GREEN - HIGH
+        elif det.score >= low_threshold:
+            color = (0, 255, 255)    # YELLOW - UNCERTAIN
+        else:
+            color = (0, 0, 255)      # RED - LOW
+        
+        # Draw mask overlay
+        mask = det.mask
+        if mask.shape[:2] != frame.shape[:2]:
+            mask = cv2.resize(mask.astype(np.float32), 
+                            (frame.shape[1], frame.shape[0]))
+        mask_bool = mask > 0.5
+        overlay[mask_bool] = color
+        
+        # Get bounding box
+        x, y, w, h = det.box.astype(int)
+        
+        # Draw bounding box (thinner line)
+        cv2.rectangle(output, (x, y), (x + w, y + h), color, 1)
+        
+        # Calculate mask top-center for label placement
+        mask_coords = np.where(mask_bool)
+        if len(mask_coords[0]) > 0:
+            top_y = int(np.min(mask_coords[0]))
+            center_x = int(np.mean(mask_coords[1]))
+        else:
+            center_x = x + w // 2
+            top_y = y
+        
+        # Draw compact label above mask
+        label = f"object_{det.obj_id}:{det.score:.2f}"
+        font_scale = 0.45
+        thickness = 1
+        (text_w, text_h), baseline = cv2.getTextSize(
+            label, cv2.FONT_HERSHEY_SIMPLEX, font_scale, thickness
+        )
+        
+        # Position label above mask
+        label_x = center_x - text_w // 2
+        label_y = max(top_y - 5, text_h + 5)
+        
+        # Background rectangle
+        cv2.rectangle(output, 
+                     (label_x - 2, label_y - text_h - 2), 
+                     (label_x + text_w + 2, label_y + 2), 
+                     color, -1)
+        
+        # Text
+        cv2.putText(output, label, (label_x, label_y),
+                   cv2.FONT_HERSHEY_SIMPLEX, font_scale, (0, 0, 0), thickness)
+    
+    # Blend overlay
+    result_frame = cv2.addWeighted(overlay, 0.3, output, 0.7, 0)
+    
+    # Add frame info (smaller)
+    info = f"Frame {result.frame_index} | Objects: {result.num_objects}"
+    cv2.putText(result_frame, info, (10, 20),
+               cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+    
+    # Add legend (smaller)
+    cv2.putText(result_frame, "GREEN=AUTO YELLOW=REVIEW RED=CHECK", 
+               (10, 38), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
+    
+    return result_frame
+
+
+def save_visualization_video(
+    video_path: str,
+    results: Dict[int, FrameResult],
+    output_path: str,
+    high_threshold: float = 0.85,
+    low_threshold: float = 0.50,
+    max_frames: int = 0
+) -> None:
+    """
+    Save visualization video with annotated detections.
+    
+    Args:
+        video_path: Input video path
+        results: Dict of frame_index -> FrameResult
+        output_path: Output video path
+        high_threshold: Threshold for HIGH confidence
+        low_threshold: Threshold for LOW confidence
+        max_frames: Maximum frames to process (0 = all)
+    """
+    cap = cv2.VideoCapture(video_path)
+    if not cap.isOpened():
+        raise RuntimeError(f"Cannot open video: {video_path}")
+    
+    fps = int(cap.get(cv2.CAP_PROP_FPS))
+    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    
+    if max_frames <= 0:
+        max_frames = total_frames
+    else:
+        max_frames = min(max_frames, total_frames)
+    
+    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+    out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
+    
+    print(f"⏳ Saving visualization to: {output_path}")
+    
+    frame_idx = 0
+    while frame_idx < max_frames:
+        ret, frame = cap.read()
+        if not ret:
+            break
+        
+        if frame_idx in results:
+            frame = visualize_frame_results(
+                frame, results[frame_idx],
+                high_threshold, low_threshold
+            )
+        
+        out.write(frame)
+        frame_idx += 1
+        
+        if frame_idx % 50 == 0:
+            print(f"   Processed {frame_idx}/{max_frames} frames...")
+    
+    cap.release()
+    out.release()
+    print(f"✅ Saved: {output_path}")
+
+
+# =============================================================================
 # Test / Demo
 # =============================================================================
 
@@ -782,8 +942,14 @@ if __name__ == "__main__":
                         help="Image path for testing")
     parser.add_argument("--prompt", type=str, default="boat, ship",
                         help="Text prompt")
-    parser.add_argument("--max-frames", type=int, default=10,
-                        help="Max frames for video test")
+    parser.add_argument("--output", type=str, default="/app/data/output",
+                        help="Output directory")
+    parser.add_argument("--high-thresh", type=float, default=0.85,
+                        help="High confidence threshold")
+    parser.add_argument("--low-thresh", type=float, default=0.50,
+                        help="Low confidence threshold")
+    parser.add_argument("--save-video", action="store_true",
+                        help="Save visualization video")
     args = parser.parse_args()
     
     # Setup logging
@@ -798,6 +964,7 @@ if __name__ == "__main__":
     
     with SAM3Engine(mode=args.mode) as engine:
         print(f"\n📦 Engine type: {'Mock' if engine.is_mock else 'GPU'}")
+        print(f"📊 Thresholds: HIGH >= {args.high_thresh}, LOW < {args.low_thresh}")
         
         # Test image detection
         if args.image:
@@ -809,8 +976,23 @@ if __name__ == "__main__":
                 result = engine.detect_image(image, args.prompt)
                 print(f"✅ Found {result.num_objects} objects")
                 for det in result.detections:
-                    print(f"   Object {det.obj_id}: score={det.score:.3f}, "
-                          f"box={det.box}")
+                    # Categorize
+                    if det.score >= args.high_thresh:
+                        status = "🟢 HIGH"
+                    elif det.score >= args.low_thresh:
+                        status = "🟡 UNCERTAIN"
+                    else:
+                        status = "🔴 LOW"
+                    print(f"   Object {det.obj_id}: {det.score:.3f} {status}")
+                
+                # Save annotated image
+                if args.save_video:
+                    output_img = visualize_frame_results(
+                        image, result, args.high_thresh, args.low_thresh
+                    )
+                    out_path = Path(args.output) / f"annotated_{Path(args.image).name}"
+                    cv2.imwrite(str(out_path), output_img)
+                    print(f"📁 Saved: {out_path}")
         
         # Test video session
         print(f"\n🎬 Testing video session...")
@@ -828,22 +1010,81 @@ if __name__ == "__main__":
             print(f"\n⏳ Adding prompt: '{args.prompt}'...")
             result = engine.add_prompt(session_id, 0, args.prompt)
             print(f"✅ Found {result.num_objects} objects on frame 0")
+            
+            # Show categorized results
+            high_count = sum(1 for d in result.detections if d.score >= args.high_thresh)
+            uncertain_count = sum(1 for d in result.detections 
+                                 if args.low_thresh <= d.score < args.high_thresh)
+            low_count = sum(1 for d in result.detections if d.score < args.low_thresh)
+            
+            print(f"\n📊 Confidence Distribution:")
+            print(f"   🟢 HIGH (auto):     {high_count}")
+            print(f"   🟡 UNCERTAIN:       {uncertain_count}")
+            print(f"   🔴 LOW (check):     {low_count}")
+            
             for det in result.detections:
-                print(f"   Object {det.obj_id}: score={det.score:.3f}")
+                if det.score >= args.high_thresh:
+                    status = "🟢"
+                elif det.score >= args.low_thresh:
+                    status = "🟡"
+                else:
+                    status = "🔴"
+                print(f"   {status} Object {det.obj_id}: {det.score:.3f}")
             
             # Propagate
             print(f"\n⏳ Propagating through video...")
             all_results = engine.propagate(session_id)
             print(f"✅ Got results for {len(all_results)} frames")
             
+            # Collect all unique objects across all frames
+            all_objects: Dict[int, List[float]] = {}  # obj_id -> list of scores
+            for frame_idx, frame_result in all_results.items():
+                for det in frame_result.detections:
+                    if det.obj_id not in all_objects:
+                        all_objects[det.obj_id] = []
+                    all_objects[det.obj_id].append(det.score)
+            
+            # Print summary of all objects
+            print(f"\n📊 All Objects Summary ({len(all_objects)} unique objects):")
+            for obj_id in sorted(all_objects.keys()):
+                scores = all_objects[obj_id]
+                avg_score = sum(scores) / len(scores)
+                min_score = min(scores)
+                max_score = max(scores)
+                frame_count = len(scores)
+                
+                # Categorize by average score
+                if avg_score >= args.high_thresh:
+                    status = "🟢"
+                elif avg_score >= args.low_thresh:
+                    status = "🟡"
+                else:
+                    status = "🔴"
+                
+                print(f"   {status} Object {obj_id}: avg={avg_score:.2f} "
+                      f"(min={min_score:.2f}, max={max_score:.2f}) "
+                      f"[{frame_count} frames]")
+            
             # Sample some frames
             sample_frames = [0, len(all_results) // 2, len(all_results) - 1]
+            print(f"\n📋 Sample Frames:")
             for idx in sample_frames:
                 if idx in all_results:
                     r = all_results[idx]
-                    scores = [f"{s:.2f}" for s in r.scores]
-                    print(f"   Frame {idx}: {r.num_objects} objects, "
-                          f"scores={scores}")
+                    scores_str = ", ".join([f"{s:.2f}" for s in r.scores])
+                    print(f"   Frame {idx}: {r.num_objects} objects [{scores_str}]")
+            
+            # Save visualization video
+            if args.save_video:
+                Path(args.output).mkdir(parents=True, exist_ok=True)
+                video_name = Path(args.video).stem
+                prompt_clean = args.prompt.replace(" ", "_").replace(",", "")
+                out_path = Path(args.output) / f"viz_{video_name}_{prompt_clean}.mp4"
+                
+                save_visualization_video(
+                    args.video, all_results, str(out_path),
+                    args.high_thresh, args.low_thresh
+                )
             
             # Close session
             engine.close_session(session_id)
