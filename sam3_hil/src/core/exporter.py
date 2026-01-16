@@ -81,6 +81,12 @@ class ExportConfig:
     include_rejected: bool = False      # Include rejected objects?
     include_hil_fields: bool = True     # Include HIL-AA specific fields in COCO?
     
+    # Label settings
+    label_name: str = "vessel"          # Label name for annotations
+    
+    # Frame sampling
+    frame_step: int = 1                 # Export every N frames (1 = all frames)
+    
     # Split settings (for COCO and Parquet only)
     train_ratio: float = 0.8
     val_ratio: float = 0.1
@@ -93,7 +99,7 @@ class ExportConfig:
     video_width: int = 1920
     video_height: int = 1080
     
-    # Category info
+    # Category info (auto-generated from label_name if not provided)
     categories: Optional[List[Dict]] = None
     
     def __post_init__(self):
@@ -102,6 +108,9 @@ class ExportConfig:
         total = self.train_ratio + self.val_ratio + self.test_ratio
         if abs(total - 1.0) > 0.001:
             raise ValueError(f"Split ratios must sum to 1.0, got {total}")
+        # Auto-generate categories if not provided
+        if self.categories is None:
+            self.categories = [{"id": 0, "name": self.label_name, "supercategory": "maritime"}]
 
 
 @dataclass
@@ -647,28 +656,40 @@ class AnnotationExporter:
         
         exported_formats = []
         
+        # Apply frame_step filtering
+        frame_step = self.config.frame_step
+        all_frame_indices = sorted(results.keys())
+        
+        if frame_step > 1:
+            # Select every N-th frame
+            filtered_indices = [idx for i, idx in enumerate(all_frame_indices) if i % frame_step == 0]
+            filtered_results = {idx: results[idx] for idx in filtered_indices}
+            logger.info(f"Frame sampling: {len(all_frame_indices)} -> {len(filtered_indices)} frames (every {frame_step} frames)")
+        else:
+            filtered_indices = all_frame_indices
+            filtered_results = results
+        
         # Step 1: Extract frames to json_image directory (used by all formats)
         logger.info("Step 1: Extracting frames from video...")
-        frame_indices = list(results.keys())
         
         if self.config.video_path:
             extractor = FrameExtractor(self.config.video_path)
             frame_to_filename = extractor.extract_frames(
-                frame_indices, 
+                filtered_indices, 
                 json_image_dir,
                 prefix="frame"
             )
         else:
             # Mock filenames if no video
             json_image_dir.mkdir(parents=True, exist_ok=True)
-            frame_to_filename = {idx: f"frame_{idx:06d}.jpg" for idx in frame_indices}
+            frame_to_filename = {idx: f"frame_{idx:06d}.jpg" for idx in filtered_indices}
         
-        # Step 2: Export Labelme JSON (no split, all frames)
+        # Step 2: Export Labelme JSON (no split, all filtered frames)
         if "labelme" in formats:
             logger.info("Step 2: Exporting Labelme JSON files...")
             labelme_exporter = LabelmeExporter(self.config)
             labelme_exporter.export(
-                results, 
+                filtered_results, 
                 object_status, 
                 json_image_dir,
                 frame_to_filename
@@ -678,7 +699,7 @@ class AnnotationExporter:
         # Step 3: Build COCO data
         logger.info("Step 3: Building COCO annotations...")
         coco_exporter = COCOExporter(self.config)
-        coco_data = coco_exporter.export(results, object_status, frame_to_filename)
+        coco_data = coco_exporter.export(filtered_results, object_status, frame_to_filename)
         
         # Step 4: Split dataset (for COCO and Parquet)
         logger.info("Step 4: Splitting dataset into train/val/test...")
@@ -745,7 +766,7 @@ class AnnotationExporter:
         logger.info("Export complete!")
         
         return ExportStats(
-            total_frames=len(results),
+            total_frames=len(filtered_results),  # Use filtered count
             total_annotations=total_annotations,
             train_images=len(train_data["images"]),
             val_images=len(val_data["images"]),
