@@ -339,12 +339,19 @@ class LabelmeExporter:
         object_status: Dict[int, str],
         output_dir: Path,
         frame_to_filename: Dict[int, str],
-        object_categories: Optional[Dict[int, str]] = None
+        object_labels: Optional[Dict[int, str]] = None
     ) -> int:
         """
         Export to Labelme JSON format.
         
         Creates one JSON file per frame with polygon annotations.
+        
+        Args:
+            results: Detection results
+            object_status: Review status per object
+            output_dir: Output directory
+            frame_to_filename: frame_idx -> filename mapping
+            object_labels: obj_id -> label_name mapping
         
         Returns:
             Number of frames exported
@@ -353,9 +360,9 @@ class LabelmeExporter:
         exported_count = 0
         
         # Default category name
-        default_category = "vessel"
+        default_label = "vessel"
         if self.config.categories:
-            default_category = self.config.categories[0].get("name", "vessel")
+            default_label = self.config.categories[0].get("name", "vessel")
         
         for frame_idx, frame_result in sorted(results.items()):
             if frame_idx not in frame_to_filename:
@@ -373,11 +380,11 @@ class LabelmeExporter:
                 # Get polygons from mask
                 polygons = mask_to_polygon(det.mask)
                 
-                # Get category name
-                if object_categories and det.obj_id in object_categories:
-                    label = object_categories[det.obj_id]
+                # Get label name from object_labels
+                if object_labels and det.obj_id in object_labels:
+                    label = object_labels[det.obj_id]
                 else:
-                    label = default_category
+                    label = default_label
                 
                 # Create shape for each polygon (in case of multiple disconnected regions)
                 for polygon in polygons:
@@ -434,10 +441,16 @@ class COCOExporter:
         results: Dict[int, FrameResult],
         object_status: Dict[int, str],
         frame_to_filename: Dict[int, str],
-        object_categories: Optional[Dict[int, int]] = None
+        object_category_ids: Optional[Dict[int, int]] = None
     ) -> Dict:
         """
         Export to COCO JSON format.
+        
+        Args:
+            results: Detection results
+            object_status: Review status per object
+            frame_to_filename: frame_idx -> filename mapping
+            object_category_ids: obj_id -> category_id mapping
         
         Returns:
             COCO data dictionary (not yet split)
@@ -473,10 +486,13 @@ class COCOExporter:
                 polygons = mask_to_polygon(det.mask)
                 segmentation = polygon_to_coco_format(polygons)
                 
+                # Get category_id from mapping, default to 0
+                category_id = object_category_ids.get(det.obj_id, 0) if object_category_ids else 0
+                
                 annotation = {
                     "id": annotation_id,
                     "image_id": image_id,
-                    "category_id": object_categories.get(det.obj_id, 0) if object_categories else 0,
+                    "category_id": category_id,
                     "bbox": [float(x) for x in det.box.tolist()],
                     "area": compute_area(det.mask),
                     "segmentation": segmentation,
@@ -629,7 +645,8 @@ class AnnotationExporter:
         results: Dict[int, FrameResult],
         object_status: Dict[int, str],
         video_analysis: Optional[Any] = None,
-        formats: Optional[List[str]] = None
+        formats: Optional[List[str]] = None,
+        object_labels: Optional[Dict[int, str]] = None
     ) -> ExportStats:
         """
         Export to all requested formats.
@@ -639,6 +656,7 @@ class AnnotationExporter:
             object_status: Review status per object
             video_analysis: Optional analysis data
             formats: List of formats ("coco", "parquet", "labelme")
+            object_labels: Dict mapping obj_id -> label_name
             
         Returns:
             ExportStats
@@ -647,6 +665,21 @@ class AnnotationExporter:
             formats = ["coco", "labelme"]
             if HAS_HF_DATASETS:
                 formats.append("parquet")
+        
+        # Default object_labels: all objects get first category
+        if object_labels is None:
+            object_labels = {}
+        
+        # Build label_name -> category_id mapping
+        label_to_cat_id = {}
+        if self.config.categories:
+            for cat in self.config.categories:
+                label_to_cat_id[cat["name"]] = cat["id"]
+        
+        # Build obj_id -> category_id mapping
+        object_category_ids = {}
+        for obj_id, label_name in object_labels.items():
+            object_category_ids[obj_id] = label_to_cat_id.get(label_name, 0)
         
         # Create directory structure
         base_dir = self.config.output_dir / self.config.base_name
@@ -692,14 +725,20 @@ class AnnotationExporter:
                 filtered_results, 
                 object_status, 
                 json_image_dir,
-                frame_to_filename
+                frame_to_filename,
+                object_labels=object_labels  # Pass object_labels
             )
             exported_formats.append("labelme")
         
         # Step 3: Build COCO data
         logger.info("Step 3: Building COCO annotations...")
         coco_exporter = COCOExporter(self.config)
-        coco_data = coco_exporter.export(filtered_results, object_status, frame_to_filename)
+        coco_data = coco_exporter.export(
+            filtered_results, 
+            object_status, 
+            frame_to_filename,
+            object_category_ids=object_category_ids  # Pass category IDs
+        )
         
         # Step 4: Split dataset (for COCO and Parquet)
         logger.info("Step 4: Splitting dataset into train/val/test...")
