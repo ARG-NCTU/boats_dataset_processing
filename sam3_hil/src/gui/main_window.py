@@ -18,7 +18,7 @@ Author: Sonic (Maritime Robotics Lab, NYCU)
 import sys
 import logging
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 import cv2
 import numpy as np
@@ -45,6 +45,8 @@ from PyQt6.QtWidgets import (
     QDoubleSpinBox,
     QFrame,
     QSizePolicy,
+    QDialog,
+    QDialogButtonBox,
 )
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QThread, QSize
 from PyQt6.QtGui import QImage, QPixmap, QAction, QKeySequence, QColor, QFont
@@ -61,6 +63,7 @@ try:
         ConfidenceCategory,
         VideoAnalysis
     )
+    from core.exporter import AnnotationExporter, ExportConfig, ExportStats
 except ImportError as e:
     print(f"Import error: {e}")
     print("Make sure you're running from the correct directory")
@@ -93,35 +96,58 @@ class SAM3Worker(QThread):
     
     def __init__(self, video_path: str, prompt: str, mode: str = "gpu"):
         super().__init__()
-        self.video_path = video_path
+        self.video_path = str(video_path)  # 確保是字串
         self.prompt = prompt
         self.mode = mode
     
     def run(self):
         """執行緒主函數。"""
+        engine = None
+        session_id = None
+        
         try:
-            self.progress.emit(10, "loading SAM3 model...")
+            self.progress.emit(10, "Loading SAM3 model...")
+            logger.info(f"Worker starting: video={self.video_path}, prompt={self.prompt}, mode={self.mode}")
             
             engine = SAM3Engine(mode=self.mode)
             
-            self.progress.emit(30, "starting video session...")
+            self.progress.emit(30, "Starting video session...")
             session_id = engine.start_video_session(self.video_path)
+            logger.info(f"Session started: {session_id}")
             
-            self.progress.emit(40, f"detecting objects (prompt: {self.prompt})...")
+            self.progress.emit(40, f"Detecting objects (prompt: {self.prompt})...")
             engine.add_prompt(session_id, 0, self.prompt)
+            logger.info("Prompt added")
             
-            self.progress.emit(50, "propagating masks...")
+            self.progress.emit(50, "Propagating masks...")
             results = engine.propagate(session_id)
+            logger.info(f"Propagation done: {len(results)} frames")
             
-            self.progress.emit(90, "closing session...")
+            self.progress.emit(90, "Closing session...")
             engine.close_session(session_id)
-            engine.shutdown()
+            session_id = None
             
-            self.progress.emit(100, "done!")
+            engine.shutdown()
+            engine = None
+            
+            self.progress.emit(100, "Done!")
             self.finished.emit({"results": results})
             
         except Exception as e:
-            self.error.emit(str(e))
+            import traceback
+            error_msg = f"{type(e).__name__}: {str(e)}\n\n{traceback.format_exc()}"
+            logger.error(f"Worker error: {error_msg}")
+            
+            # 清理資源
+            try:
+                if session_id and engine:
+                    engine.close_session(session_id)
+                if engine:
+                    engine.shutdown()
+            except:
+                pass
+            
+            self.error.emit(error_msg)
 
 
 # =============================================================================
@@ -176,7 +202,7 @@ class ObjectListItem(QWidget):
         layout.addStretch()
         
         # 狀態標籤
-        self.status_label = QLabel("⏳")
+        self.status_label = QLabel("?")
         self.status_label.setToolTip("pending review")
         layout.addWidget(self.status_label)
         
@@ -227,10 +253,225 @@ class ObjectListItem(QWidget):
     def reset(self):
         """重設狀態。"""
         self.status = "pending"
-        self.status_label.setText("⏳")
+        self.status_label.setText("?")
         self.status_label.setToolTip("pending review")
         self.accept_btn.setEnabled(True)
         self.reject_btn.setEnabled(True)
+
+
+# =============================================================================
+# Export Dialog
+# =============================================================================
+
+class ExportDialog(QDialog):
+    """
+    匯出設定對話框。
+    
+    讓使用者選擇：
+    - 輸出目錄和 Dataset 名稱
+    - 匯出格式（COCO, HuggingFace Parquet, Labelme JSON）
+    - Train/Val/Test Split 比例
+    - 是否包含被拒絕的物件
+    """
+    
+    def __init__(self, parent=None, default_name: str = "dataset"):
+        super().__init__(parent)
+        self.setWindowTitle("Export Annotations")
+        self.setMinimumWidth(500)
+        self.default_name = default_name
+        
+        self.setup_ui()
+    
+    def setup_ui(self):
+        layout = QVBoxLayout()
+        self.setLayout(layout)
+        
+        from PyQt6.QtWidgets import QLineEdit, QFormLayout
+        
+        # Output Directory and Dataset Name
+        output_group = QGroupBox("Output Settings")
+        output_layout = QFormLayout()
+        output_group.setLayout(output_layout)
+        
+        # Directory
+        dir_widget = QWidget()
+        dir_layout = QHBoxLayout()
+        dir_layout.setContentsMargins(0, 0, 0, 0)
+        dir_widget.setLayout(dir_layout)
+        
+        self.dir_input = QLineEdit("/app/data/output")
+        dir_layout.addWidget(self.dir_input)
+        
+        browse_btn = QPushButton("Browse...")
+        browse_btn.clicked.connect(self.browse_directory)
+        dir_layout.addWidget(browse_btn)
+        
+        output_layout.addRow("Output Directory:", dir_widget)
+        
+        # Dataset Name
+        self.name_input = QLineEdit(self.default_name)
+        output_layout.addRow("Dataset Name:", self.name_input)
+        
+        # Preview
+        self.path_preview = QLabel("")
+        self.path_preview.setStyleSheet("color: gray; font-size: 10px;")
+        self.update_path_preview()
+        output_layout.addRow("", self.path_preview)
+        
+        self.dir_input.textChanged.connect(self.update_path_preview)
+        self.name_input.textChanged.connect(self.update_path_preview)
+        
+        layout.addWidget(output_group)
+        
+        # Export Formats
+        format_group = QGroupBox("Export Formats")
+        format_layout = QVBoxLayout()
+        format_group.setLayout(format_layout)
+        
+        self.labelme_checkbox = QCheckBox("Labelme JSON + Images (for manual correction)")
+        self.labelme_checkbox.setChecked(True)
+        self.labelme_checkbox.setEnabled(False)  # Always export
+        format_layout.addWidget(self.labelme_checkbox)
+        
+        format_layout.addWidget(QLabel("  ↳ json_image/ - per-frame JSON with polygon masks"))
+        
+        self.coco_checkbox = QCheckBox("COCO JSON (with train/val/test split)")
+        self.coco_checkbox.setChecked(True)
+        format_layout.addWidget(self.coco_checkbox)
+        
+        format_layout.addWidget(QLabel("  ↳ coco/ - standard object detection format"))
+        
+        self.parquet_checkbox = QCheckBox("HuggingFace Parquet (with train/val/test split)")
+        self.parquet_checkbox.setChecked(True)
+        format_layout.addWidget(self.parquet_checkbox)
+        
+        format_layout.addWidget(QLabel("  ↳ parquet/ - for HuggingFace training"))
+        
+        layout.addWidget(format_group)
+        
+        # Train/Val/Test Split
+        split_group = QGroupBox("Train/Val/Test Split (for COCO and Parquet)")
+        split_layout = QFormLayout()
+        split_group.setLayout(split_layout)
+        
+        self.train_spin = QDoubleSpinBox()
+        self.train_spin.setRange(0.0, 1.0)
+        self.train_spin.setSingleStep(0.05)
+        self.train_spin.setValue(0.8)
+        self.train_spin.setDecimals(2)
+        split_layout.addRow("Train Ratio:", self.train_spin)
+        
+        self.val_spin = QDoubleSpinBox()
+        self.val_spin.setRange(0.0, 1.0)
+        self.val_spin.setSingleStep(0.05)
+        self.val_spin.setValue(0.1)
+        self.val_spin.setDecimals(2)
+        split_layout.addRow("Val Ratio:", self.val_spin)
+        
+        self.test_spin = QDoubleSpinBox()
+        self.test_spin.setRange(0.0, 1.0)
+        self.test_spin.setSingleStep(0.05)
+        self.test_spin.setValue(0.1)
+        self.test_spin.setDecimals(2)
+        split_layout.addRow("Test Ratio:", self.test_spin)
+        
+        self.train_spin.valueChanged.connect(self.validate_split)
+        self.val_spin.valueChanged.connect(self.validate_split)
+        self.test_spin.valueChanged.connect(self.validate_split)
+        
+        self.split_warning = QLabel("✓ Total = 1.0")
+        self.split_warning.setStyleSheet("color: green;")
+        split_layout.addRow(self.split_warning)
+        
+        layout.addWidget(split_group)
+        
+        # Options
+        options_group = QGroupBox("Options")
+        options_layout = QVBoxLayout()
+        options_group.setLayout(options_layout)
+        
+        self.rejected_checkbox = QCheckBox("Include rejected objects")
+        self.rejected_checkbox.setChecked(False)
+        options_layout.addWidget(self.rejected_checkbox)
+        
+        self.hil_fields_checkbox = QCheckBox("Include HIL-AA fields in COCO (score, review_status)")
+        self.hil_fields_checkbox.setChecked(True)
+        options_layout.addWidget(self.hil_fields_checkbox)
+        
+        layout.addWidget(options_group)
+        
+        # Buttons
+        button_box = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | 
+            QDialogButtonBox.StandardButton.Cancel
+        )
+        button_box.accepted.connect(self.accept)
+        button_box.rejected.connect(self.reject)
+        layout.addWidget(button_box)
+    
+    def update_path_preview(self):
+        """更新路徑預覽"""
+        output_dir = self.dir_input.text()
+        name = self.name_input.text() or "dataset"
+        self.path_preview.setText(f"→ {output_dir}/{name}/")
+    
+    def validate_split(self):
+        """驗證 split ratio 總和是否為 1.0"""
+        total = self.train_spin.value() + self.val_spin.value() + self.test_spin.value()
+        if abs(total - 1.0) > 0.01:
+            self.split_warning.setText(f"⚠ Total = {total:.2f} (should be 1.0)")
+            self.split_warning.setStyleSheet("color: red;")
+        else:
+            self.split_warning.setText("✓ Total = 1.0")
+            self.split_warning.setStyleSheet("color: green;")
+    
+    def browse_directory(self):
+        """選擇輸出目錄。"""
+        dir_path = QFileDialog.getExistingDirectory(
+            self,
+            "Select Output Directory",
+            self.dir_input.text()
+        )
+        if dir_path:
+            self.dir_input.setText(dir_path)
+    
+    def get_selected_formats(self) -> List[str]:
+        """取得選擇的格式。"""
+        formats = ["labelme"]  # Always include labelme
+        if self.coco_checkbox.isChecked():
+            formats.append("coco")
+        if self.parquet_checkbox.isChecked():
+            formats.append("parquet")
+        return formats
+    
+    def get_output_dir(self) -> str:
+        """取得輸出目錄。"""
+        return self.dir_input.text()
+    
+    def get_dataset_name(self) -> str:
+        """取得 dataset 名稱。"""
+        return self.name_input.text() or "dataset"
+    
+    def get_include_rejected(self) -> bool:
+        """是否包含被拒絕的物件。"""
+        return self.rejected_checkbox.isChecked()
+    
+    def get_include_hil_fields(self) -> bool:
+        """是否包含 HIL-AA 欄位。"""
+        return self.hil_fields_checkbox.isChecked()
+    
+    def get_split_ratios(self) -> Tuple[float, float, float]:
+        """取得 train/val/test split 比例。"""
+        return (
+            self.train_spin.value(),
+            self.val_spin.value(),
+            self.test_spin.value()
+        )
+    
+    def is_valid(self) -> bool:
+        """驗證設定是否有效。"""
+        total = self.train_spin.value() + self.val_spin.value() + self.test_spin.value()
+        return abs(total - 1.0) < 0.01
 
 
 # =============================================================================
@@ -338,7 +579,7 @@ class HILAAMainWindow(QMainWindow):
         
         control_layout.addSpacing(20)
         
-        self.prev_btn = QPushButton("<<")
+        self.prev_btn = QPushButton("|<")
         self.prev_btn.setFixedWidth(40)
         self.prev_btn.clicked.connect(self.prev_frame)
         self.prev_btn.setEnabled(False)
@@ -350,7 +591,7 @@ class HILAAMainWindow(QMainWindow):
         self.play_btn.setEnabled(False)
         control_layout.addWidget(self.play_btn)
         
-        self.next_btn = QPushButton(">>")
+        self.next_btn = QPushButton(">|")
         self.next_btn.setFixedWidth(40)
         self.next_btn.clicked.connect(self.next_frame)
         self.next_btn.setEnabled(False)
@@ -442,7 +683,7 @@ class HILAAMainWindow(QMainWindow):
         
         # 批次操作
         batch_layout = QHBoxLayout()
-        self.accept_all_high_btn = QPushButton("✓ accept all HIGH")
+        self.accept_all_high_btn = QPushButton("✓ Accept all HIGH")
         self.accept_all_high_btn.clicked.connect(self.accept_all_high)
         self.accept_all_high_btn.setEnabled(False)
         batch_layout.addWidget(self.accept_all_high_btn)
@@ -756,7 +997,7 @@ class HILAAMainWindow(QMainWindow):
             return
         
         self.is_playing = True
-        self.play_btn.setText("⏸")
+        self.play_btn.setText("||")
         interval = int(1000 / self.video_loader.metadata.fps)
         self.play_timer.start(interval)
     
@@ -789,6 +1030,10 @@ class HILAAMainWindow(QMainWindow):
         # 停止播放
         self.stop_play()
         
+        # 取得影片路徑（確保是字串）
+        video_path = str(self.video_loader.video_path)
+        logger.info(f"Starting detection: video={video_path}, prompt={prompt}, mode={mode}")
+        
         # 建立進度對話框
         self.progress_dialog = QProgressDialog(
             "Running SAM3 detection...", "Cancel", 0, 100, self
@@ -798,11 +1043,7 @@ class HILAAMainWindow(QMainWindow):
         self.progress_dialog.setMinimumDuration(0)
         
         # 建立並啟動 worker 執行緒
-        self.worker = SAM3Worker(
-            self.video_loader.video_path,
-            prompt,
-            mode
-        )
+        self.worker = SAM3Worker(video_path, prompt, mode)
         self.worker.progress.connect(self.on_detection_progress)
         self.worker.finished.connect(self.on_detection_finished)
         self.worker.error.connect(self.on_detection_error)
@@ -842,7 +1083,14 @@ class HILAAMainWindow(QMainWindow):
         """偵測錯誤。"""
         self.progress_dialog.close()
         self.detect_btn.setEnabled(True)
-        QMessageBox.critical(self, "Detection Error", f"SAM3 detection failed:\n{error_msg}")
+        
+        # 顯示錯誤（如果太長就截斷）
+        display_msg = error_msg
+        if len(error_msg) > 1000:
+            display_msg = error_msg[:1000] + "\n\n... (see terminal for full error)"
+        
+        logger.error(f"Detection error:\n{error_msg}")
+        QMessageBox.critical(self, "Detection Error", f"SAM3 detection failed:\n\n{display_msg}")
     
     # =========================================================================
     # 物件列表管理
@@ -960,14 +1208,88 @@ class HILAAMainWindow(QMainWindow):
             QMessageBox.warning(self, "Warning", "No results to export")
             return
         
-        # TODO: 實作匯出功能
-        QMessageBox.information(
-            self, "Export", 
-            "Export functionality is not yet implemented\n\n"
-            "Planned supported formats:\n"
-            "- COCO JSON\n"
-            "- YOLO TXT"
+        # 取得預設名稱（影片檔名）
+        default_name = Path(self.video_loader.video_path).stem
+        
+        # 建立 Export 對話框
+        dialog = ExportDialog(self, default_name=default_name)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        
+        # 驗證設定
+        if not dialog.is_valid():
+            QMessageBox.warning(self, "Warning", "Train/Val/Test ratios must sum to 1.0")
+            return
+        
+        # 取得匯出設定
+        formats = dialog.get_selected_formats()
+        output_dir = dialog.get_output_dir()
+        dataset_name = dialog.get_dataset_name()
+        include_rejected = dialog.get_include_rejected()
+        include_hil_fields = dialog.get_include_hil_fields()
+        train_ratio, val_ratio, test_ratio = dialog.get_split_ratios()
+        
+        # 建立 ExportConfig
+        config = ExportConfig(
+            output_dir=Path(output_dir),
+            base_name=dataset_name,
+            video_path=str(self.video_loader.video_path),
+            video_fps=self.video_loader.metadata.fps,
+            video_width=self.video_loader.metadata.width,
+            video_height=self.video_loader.metadata.height,
+            include_rejected=include_rejected,
+            include_hil_fields=include_hil_fields,
+            train_ratio=train_ratio,
+            val_ratio=val_ratio,
+            test_ratio=test_ratio
         )
+        
+        # 建立進度對話框
+        progress = QProgressDialog("Exporting annotations...", None, 0, 0, self)
+        progress.setWindowModality(Qt.WindowModality.WindowModal)
+        progress.setMinimumDuration(0)
+        progress.show()
+        QApplication.processEvents()
+        
+        # 執行匯出
+        try:
+            exporter = AnnotationExporter(config)
+            stats = exporter.export_all(
+                self.sam3_results,
+                self.object_status,
+                self.video_analysis,
+                formats=formats
+            )
+            
+            progress.close()
+            
+            # 顯示結果
+            msg = (
+                f"Export Complete!\n\n"
+                f"Total Frames: {stats.total_frames}\n"
+                f"Total Annotations: {stats.total_annotations}\n\n"
+                f"Dataset Split (COCO/Parquet):\n"
+                f"  Train: {stats.train_images} images\n"
+                f"  Val: {stats.val_images} images\n"
+                f"  Test: {stats.test_images} images\n\n"
+                f"Object Status:\n"
+                f"  Accepted: {stats.accepted_objects}\n"
+                f"  Rejected: {stats.rejected_objects}\n"
+                f"  Pending: {stats.pending_objects}\n\n"
+                f"Formats: {', '.join(stats.formats_exported)}\n\n"
+                f"Output:\n"
+                f"  {stats.output_dir}/\n"
+            )
+            
+            QMessageBox.information(self, "Export Complete", msg)
+            self.statusBar().showMessage(f"Exported to {stats.output_dir}")
+            
+        except Exception as e:
+            progress.close()
+            logger.error(f"Export error: {e}")
+            import traceback
+            traceback.print_exc()
+            QMessageBox.critical(self, "Export Error", f"Failed to export:\n{e}")
     
     def show_about(self):
         """顯示關於對話框。"""
