@@ -6,6 +6,7 @@ Core modules for HIL-AA system.
 - sam3_engine: SAM 3 inference wrapper
 - confidence_analyzer: Active learning logic
 - temporal_tracker: Video propagation and jitter detection
+- exporter: Export annotations to COCO, HuggingFace Parquet, Labelme JSON
 """
 
 from .video_loader import VideoLoader, VideoMetadata, load_video, extract_frames
@@ -24,6 +25,14 @@ from .confidence_analyzer import (
     FrameAnalysis,
     VideoAnalysis,
     ObjectSummary,
+)
+from .exporter import (
+    AnnotationExporter,
+    ExportConfig,
+    ExportStats,
+    COCOExporter,
+    HuggingFaceExporter,
+    LabelmeExporter,
 )
 
 __all__ = [
@@ -46,4 +55,11 @@ __all__ = [
     "FrameAnalysis",
     "VideoAnalysis",
     "ObjectSummary",
+    # exporter
+    "AnnotationExporter",
+    "ExportConfig",
+    "ExportStats",
+    "COCOExporter",
+    "HuggingFaceExporter",
+    "LabelmeExporter",
 ]
