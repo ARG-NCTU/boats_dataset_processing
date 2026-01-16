@@ -777,6 +777,7 @@ class HILAAMainWindow(QMainWindow):
         # Refinement 狀態
         self.refinement_active = False
         self.refinement_obj_id: Optional[int] = None
+        self.add_object_mode = False  # True when adding new object instead of refining
         self.sam3_engine: Optional[SAM3Engine] = None  # Reuse for refinement
         
         # 設定 UI
@@ -998,6 +999,29 @@ class HILAAMainWindow(QMainWindow):
             }
         """)
         refine_layout.addWidget(self.refine_btn)
+        
+        # Add Object 按鈕（手動新增物件）
+        self.add_object_btn = QPushButton("➕ Add Object")
+        self.add_object_btn.setToolTip("Add a new object by clicking on the image")
+        self.add_object_btn.clicked.connect(self.start_add_object)
+        self.add_object_btn.setEnabled(False)
+        self.add_object_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #FF9800;
+                color: white;
+                padding: 5px 10px;
+                border-radius: 4px;
+            }
+            QPushButton:hover {
+                background-color: #F57C00;
+            }
+            QPushButton:disabled {
+                background-color: #666;
+                color: #999;
+            }
+        """)
+        refine_layout.addWidget(self.add_object_btn)
+        
         refine_layout.addStretch()
         objects_layout.addLayout(refine_layout)
         
@@ -1275,6 +1299,7 @@ class HILAAMainWindow(QMainWindow):
             self.play_btn.setEnabled(True)
             self.next_btn.setEnabled(True)
             self.detect_btn.setEnabled(True)
+            self.add_object_btn.setEnabled(True)  # 開啟影片後就可以手動新增物件
             
             # 顯示第一幀
             self.display_frame(0)
@@ -1796,6 +1821,43 @@ class HILAAMainWindow(QMainWindow):
         self.statusBar().showMessage(f"Refinement Mode: Object {obj_id} - Left click to include, Right click to exclude")
         logger.info(f"Started refinement for object {obj_id}")
     
+    def start_add_object(self):
+        """開始手動新增物件模式。"""
+        if self.video_loader is None:
+            QMessageBox.warning(self, "Warning", "Please open a video first")
+            return
+        
+        # 取得當前幀圖像大小
+        frame = self.video_loader.get_frame(self.current_frame)
+        if frame is None:
+            QMessageBox.warning(self, "Warning", "Cannot get current frame")
+            return
+        
+        h, w = frame.shape[:2]
+        
+        # 進入 add object 模式
+        self.refinement_active = True
+        self.add_object_mode = True
+        self.refinement_obj_id = None
+        
+        # 設置 canvas 為 add object 模式
+        self.video_canvas.enter_add_object_mode(
+            frame_idx=self.current_frame,
+            image_shape=(h, w)
+        )
+        
+        # 顯示控制面板（add object 模式）
+        self.refinement_panel.enter_add_object()
+        
+        # 停止播放
+        self.stop_play()
+        
+        # 禁用其他控制
+        self._set_controls_enabled(False)
+        
+        self.statusBar().showMessage("Add Object Mode: Left click to include, Right click to exclude")
+        logger.info("Started add object mode")
+    
     def on_refinement_point_added(self, x: int, y: int, is_positive: bool):
         """處理 refinement 點擊。"""
         if not self.refinement_active:
@@ -1894,30 +1956,90 @@ class HILAAMainWindow(QMainWindow):
         self._run_refinement()
     
     def on_refinement_apply(self):
-        """套用 refinement 結果。"""
+        """套用 refinement 結果或新增物件。"""
         if not self.refinement_active or not self.video_canvas.refinement_state:
             return
         
         state = self.video_canvas.refinement_state
-        obj_id = state.object_id
         new_mask = state.current_mask
         
-        # 更新 sam3_results 中的 mask
-        frame_result = self.sam3_results.get(self.current_frame)
-        if frame_result:
-            for det in frame_result.detections:
-                if det.obj_id == obj_id:
-                    det.mask = new_mask.astype(np.uint8)
-                    logger.info(f"Applied refined mask for object {obj_id}")
-                    break
+        # 檢查 mask 是否有效
+        if new_mask is None or not np.any(new_mask):
+            QMessageBox.warning(self, "Warning", "No valid mask to apply. Please add points first.")
+            return
+        
+        if self.add_object_mode:
+            # === Add New Object Mode ===
+            self._add_new_object(new_mask)
+        else:
+            # === Refinement Mode ===
+            obj_id = state.object_id
+            
+            # 更新 sam3_results 中的 mask
+            frame_result = self.sam3_results.get(self.current_frame)
+            if frame_result:
+                for det in frame_result.detections:
+                    if det.obj_id == obj_id:
+                        det.mask = new_mask.astype(np.uint8)
+                        logger.info(f"Applied refined mask for object {obj_id}")
+                        break
+            
+            self.statusBar().showMessage(f"Refinement applied for object {obj_id}")
         
         # 退出 refinement 模式
         self._exit_refinement_mode()
         
         # 重新顯示更新後的幀
         self.display_frame(self.current_frame)
+    
+    def _add_new_object(self, mask: np.ndarray):
+        """新增一個新的物件到結果中。"""
+        from core.sam3_engine import Detection, FrameResult
         
-        self.statusBar().showMessage(f"Refinement applied for object {obj_id}")
+        # 計算新的 obj_id（找到最大的現有 ID + 1）
+        max_obj_id = -1
+        for frame_result in self.sam3_results.values():
+            for det in frame_result.detections:
+                max_obj_id = max(max_obj_id, det.obj_id)
+        new_obj_id = max_obj_id + 1
+        
+        # 計算 bounding box
+        ys, xs = np.where(mask)
+        if len(xs) == 0 or len(ys) == 0:
+            QMessageBox.warning(self, "Warning", "Empty mask, cannot add object.")
+            return
+        
+        x_min, x_max = xs.min(), xs.max()
+        y_min, y_max = ys.min(), ys.max()
+        box = np.array([x_min, y_min, x_max - x_min, y_max - y_min])
+        
+        # 建立新的 Detection
+        new_detection = Detection(
+            obj_id=new_obj_id,
+            mask=mask.astype(np.uint8),
+            box=box,
+            score=1.0  # 手動新增的給滿分
+        )
+        
+        # 加入當前幀的結果
+        if self.current_frame not in self.sam3_results:
+            self.sam3_results[self.current_frame] = FrameResult(
+                frame_index=self.current_frame,
+                detections=[new_detection]
+            )
+        else:
+            self.sam3_results[self.current_frame].detections.append(new_detection)
+        
+        # 重新分析並更新物件列表
+        self.video_analysis = self.analyzer.analyze_video(self.sam3_results)
+        self.update_object_list()
+        self.update_analysis_display()
+        
+        # 設定新物件狀態為 accepted
+        self.object_status[new_obj_id] = "accepted"
+        
+        logger.info(f"Added new object {new_obj_id} at frame {self.current_frame}")
+        self.statusBar().showMessage(f"Added new object {new_obj_id}")
     
     def on_refinement_cancel(self):
         """取消 refinement。"""
@@ -1926,9 +2048,10 @@ class HILAAMainWindow(QMainWindow):
         self.statusBar().showMessage("Refinement cancelled")
     
     def _exit_refinement_mode(self):
-        """退出 refinement 模式。"""
+        """退出 refinement 或 add object 模式。"""
         self.refinement_active = False
         self.refinement_obj_id = None
+        self.add_object_mode = False
         
         self.video_canvas.exit_refinement_mode()
         self.refinement_panel.exit_refinement()
@@ -1946,6 +2069,8 @@ class HILAAMainWindow(QMainWindow):
         self.accept_all_high_btn.setEnabled(enabled and len(self.sam3_results) > 0)
         self.reset_all_btn.setEnabled(enabled and len(self.sam3_results) > 0)
         self.refine_btn.setEnabled(enabled and len(self.object_list.selectedItems()) > 0)
+        # Add Object 按鈕在有影片時就可以用
+        self.add_object_btn.setEnabled(enabled and self.video_loader is not None)
 
 
 # =============================================================================
