@@ -116,6 +116,28 @@ class BaseSAM3Engine(ABC):
         pass
     
     @abstractmethod
+    def refine_mask(
+        self,
+        image: np.ndarray,
+        points: np.ndarray,
+        labels: np.ndarray,
+        mask_input: Optional[np.ndarray] = None
+    ) -> np.ndarray:
+        """
+        Refine a mask using point prompts.
+        
+        Args:
+            image: Input image (H, W, 3) BGR numpy array
+            points: Point coordinates (N, 2) array of [x, y]
+            labels: Point labels (N,) array of 1 (positive) or 0 (negative)
+            mask_input: Optional previous mask (H, W) to refine
+            
+        Returns:
+            Refined mask (H, W) boolean array
+        """
+        pass
+    
+    @abstractmethod
     def start_video_session(self, video_path: str) -> str:
         """Start a video session and return session ID."""
         pass
@@ -176,13 +198,15 @@ class SAM3GPUEngine(BaseSAM3Engine):
         logger.info(f"CUDA device: {torch.cuda.get_device_name(0)}")
     
     def _load_image_model(self) -> None:
-        """Lazy load image model."""
+        """Lazy load image model with interactivity support for point prompts."""
         if self._image_model is None:
-            logger.info("Loading SAM3 image model...")
+            logger.info("Loading SAM3 image model with interactivity support...")
             from sam3.model_builder import build_sam3_image_model
             from sam3.model.sam3_image_processor import Sam3Processor
             
-            self._image_model = build_sam3_image_model()
+            # Enable inst_interactivity for point prompt support
+            # See: sam3_for_sam1_task_example.ipynb
+            self._image_model = build_sam3_image_model(enable_inst_interactivity=True)
             self._image_processor = Sam3Processor(self._image_model)
             logger.info("SAM3 image model loaded!")
     
@@ -263,6 +287,91 @@ class SAM3GPUEngine(BaseSAM3Engine):
             ))
         
         return FrameResult(frame_index=0, detections=detections)
+    
+    def refine_mask(
+        self,
+        image: np.ndarray,
+        points: np.ndarray,
+        labels: np.ndarray,
+        mask_input: Optional[np.ndarray] = None
+    ) -> np.ndarray:
+        """
+        Refine a mask using point prompts.
+        
+        Uses SAM3's predict_inst with point prompts to generate
+        a refined mask. Based on sam3_for_sam1_task_example.ipynb.
+        
+        Args:
+            image: Input image (H, W, 3) BGR numpy array
+            points: Point coordinates (N, 2) array of [x, y]
+            labels: Point labels (N,) array of 1 (positive) or 0 (negative)
+            mask_input: Optional previous mask logits (256, 256) to use as hint
+            
+        Returns:
+            Refined mask (H, W) boolean array
+        """
+        from PIL import Image as PILImage
+        
+        self._load_image_model()
+        
+        # Convert BGR to RGB
+        if len(image.shape) == 3 and image.shape[2] == 3:
+            image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        else:
+            image_rgb = image
+        
+        # Convert to PIL
+        pil_image = PILImage.fromarray(image_rgb)
+        
+        # Set image and get inference state
+        inference_state = self._image_processor.set_image(pil_image)
+        
+        # Check if we have points
+        if len(points) == 0:
+            # Return original mask or empty mask
+            if mask_input is not None:
+                return mask_input.astype(bool)
+            return np.zeros((image.shape[0], image.shape[1]), dtype=bool)
+        
+        # Prepare point prompts - SAM3 expects (N, 2) numpy arrays
+        point_coords = points.astype(np.float32)  # (N, 2)
+        point_labels = labels.astype(np.int32)    # (N,)
+        
+        # Run prediction with points using model.predict_inst
+        try:
+            # Use model.predict_inst for point prompts
+            # API: model.predict_inst(inference_state, point_coords, point_labels, 
+            #                         box=None, mask_input=None, multimask_output=True)
+            masks, scores, logits = self._image_model.predict_inst(
+                inference_state,
+                point_coords=point_coords,
+                point_labels=point_labels,
+                mask_input=mask_input[None, :, :] if mask_input is not None else None,
+                multimask_output=True,
+            )
+            
+            # Select best mask by score
+            if len(masks) > 0:
+                best_idx = np.argmax(scores)
+                best_mask = masks[best_idx]
+                
+                # Ensure 2D
+                if best_mask.ndim == 3:
+                    best_mask = best_mask[0]
+                
+                return (best_mask > 0.5).astype(bool)
+            else:
+                # No mask produced, return original or empty
+                if mask_input is not None:
+                    return mask_input.astype(bool)
+                return np.zeros((image.shape[0], image.shape[1]), dtype=bool)
+                
+        except Exception as e:
+            logger.error(f"Error in refine_mask: {e}")
+            # Return original mask on error
+            if mask_input is not None:
+                return mask_input.astype(bool)
+            return np.zeros((image.shape[0], image.shape[1]), dtype=bool)
     
     def start_video_session(self, video_path: str) -> str:
         """
@@ -500,6 +609,44 @@ class SAM3MockEngine(BaseSAM3Engine):
         logger.debug(f"Mock image detection: {num_detections} objects")
         return FrameResult(frame_index=0, detections=detections)
     
+    def refine_mask(
+        self,
+        image: np.ndarray,
+        points: np.ndarray,
+        labels: np.ndarray,
+        mask_input: Optional[np.ndarray] = None
+    ) -> np.ndarray:
+        """
+        Mock mask refinement using point prompts.
+        
+        For testing, this creates a simple mask based on the points:
+        - Positive points expand a circular region
+        - Negative points create holes
+        """
+        h, w = image.shape[:2]
+        
+        if mask_input is not None:
+            result_mask = mask_input.astype(np.float32).copy()
+        else:
+            result_mask = np.zeros((h, w), dtype=np.float32)
+        
+        # Process each point
+        for i, (point, label) in enumerate(zip(points, labels)):
+            x, y = int(point[0]), int(point[1])
+            radius = 30 + self._rng.integers(10, 40)  # Random radius
+            
+            # Create circular mask for this point
+            yy, xx = np.ogrid[:h, :w]
+            circle = ((xx - x) ** 2 + (yy - y) ** 2) <= radius ** 2
+            
+            if label == 1:  # Positive: add to mask
+                result_mask = np.maximum(result_mask, circle.astype(np.float32))
+            else:  # Negative: remove from mask
+                result_mask[circle] = 0
+        
+        logger.debug(f"Mock refine_mask: {len(points)} points")
+        return result_mask > 0.5
+    
     def start_video_session(self, video_path: str) -> str:
         """Start mock video session."""
         session_id = str(uuid.uuid4())
@@ -719,6 +866,16 @@ class SAM3Engine:
         """Run detection on a single image."""
         return self._engine.detect_image(image, prompt)
     
+    def refine_mask(
+        self,
+        image: np.ndarray,
+        points: np.ndarray,
+        labels: np.ndarray,
+        mask_input: Optional[np.ndarray] = None
+    ) -> np.ndarray:
+        """Refine a mask using point prompts."""
+        return self._engine.refine_mask(image, points, labels, mask_input)
+    
     def start_video_session(self, video_path: str) -> str:
         """Start a video session."""
         return self._engine.start_video_session(video_path)
@@ -827,7 +984,7 @@ def visualize_frame_results(
             top_y = y
         
         # Draw compact label above mask
-        label = f"object_{det.obj_id}:{det.score:.2f}"
+        label = f"{det.obj_id}:{det.score:.2f}"
         font_scale = 0.45
         thickness = 1
         (text_w, text_h), baseline = cv2.getTextSize(
