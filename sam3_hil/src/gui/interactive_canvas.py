@@ -156,6 +156,28 @@ class InteractiveCanvas(QLabel):
         self._update_display()
         logger.info(f"Entered refinement mode for object {obj_id}")
     
+    def enter_add_object_mode(self, frame_idx: int, image_shape: Tuple[int, int]):
+        """
+        Enter add object mode to create a new object.
+        
+        Args:
+            frame_idx: Current frame index
+            image_shape: (height, width) of the image
+        """
+        self.refinement_mode = True
+        # Use -1 as placeholder obj_id for new object
+        empty_mask = np.zeros(image_shape, dtype=bool)
+        self.refinement_state = RefinementState(
+            object_id=-1,  # Will be assigned later
+            frame_idx=frame_idx,
+            original_mask=empty_mask,
+            current_mask=empty_mask
+        )
+        self.mask_overlay = None  # No mask to show initially
+        self.setCursor(Qt.CursorShape.CrossCursor)
+        self._update_display()
+        logger.info("Entered add object mode")
+    
     def exit_refinement_mode(self):
         """Exit refinement mode."""
         self.refinement_mode = False
@@ -357,13 +379,13 @@ class InteractiveCanvas(QLabel):
 
 class RefinementControlPanel(QFrame):
     """
-    Control panel for refinement mode.
+    Control panel for refinement mode and add object mode.
     
     Provides buttons for:
     - Clear all points
     - Undo last point
-    - Apply refinement
-    - Cancel refinement
+    - Apply refinement / Add object
+    - Cancel
     """
     
     clear_clicked = pyqtSignal()
@@ -373,6 +395,8 @@ class RefinementControlPanel(QFrame):
     
     def __init__(self, parent=None):
         super().__init__(parent)
+        
+        self.mode = "refinement"  # "refinement" or "add_object"
         
         self.setFrameStyle(QFrame.Shape.StyledPanel | QFrame.Shadow.Raised)
         self.setStyleSheet("""
@@ -419,10 +443,10 @@ class RefinementControlPanel(QFrame):
         self.setLayout(layout)
         
         # Title
-        title = QLabel("🎯 Refinement Mode")
-        title.setStyleSheet("color: #4CAF50; font-size: 14px; font-weight: bold;")
-        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(title)
+        self.title_label = QLabel("🎯 Refinement Mode")
+        self.title_label.setStyleSheet("color: #4CAF50; font-size: 14px; font-weight: bold;")
+        self.title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(self.title_label)
         
         # Object info
         self.object_label = QLabel("Object: -")
@@ -431,13 +455,13 @@ class RefinementControlPanel(QFrame):
         layout.addWidget(self.object_label)
         
         # Instructions
-        instructions = QLabel(
+        self.instructions = QLabel(
             "Left click: Include region (+)\n"
             "Right click: Exclude region (-)"
         )
-        instructions.setStyleSheet("color: #aaa; font-size: 11px;")
-        instructions.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(instructions)
+        self.instructions.setStyleSheet("color: #aaa; font-size: 11px;")
+        self.instructions.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(self.instructions)
         
         # Point counter
         self.point_counter = QLabel("Points: 0")
@@ -486,9 +510,58 @@ class RefinementControlPanel(QFrame):
         self.point_counter.setText(f"Points: {count}")
     
     def enter_refinement(self, obj_id: int, score: float = 0.0):
-        """Show the panel for refinement."""
+        """Show the panel for refinement mode."""
+        self.mode = "refinement"
+        self.title_label.setText("🎯 Refinement Mode")
+        self.title_label.setStyleSheet("color: #4CAF50; font-size: 14px; font-weight: bold;")
+        self.setStyleSheet(self.styleSheet().replace("#2196F3", "#4CAF50"))
         self.set_object_info(obj_id, score)
         self.set_point_count(0)
+        self.apply_btn.setText("✓ Apply")
+        self.show()
+    
+    def enter_add_object(self):
+        """Show the panel for add object mode."""
+        self.mode = "add_object"
+        self.title_label.setText("➕ Add New Object")
+        self.title_label.setStyleSheet("color: #2196F3; font-size: 14px; font-weight: bold;")
+        self.object_label.setText("Click to define new object")
+        self.set_point_count(0)
+        self.apply_btn.setText("✓ Add Object")
+        self.setStyleSheet("""
+            RefinementControlPanel {
+                background-color: #2d2d2d;
+                border: 2px solid #2196F3;
+                border-radius: 8px;
+                padding: 10px;
+            }
+            QPushButton {
+                padding: 8px 16px;
+                border-radius: 4px;
+                font-weight: bold;
+            }
+            QPushButton#applyBtn {
+                background-color: #2196F3;
+                color: white;
+            }
+            QPushButton#applyBtn:hover {
+                background-color: #1976D2;
+            }
+            QPushButton#cancelBtn {
+                background-color: #f44336;
+                color: white;
+            }
+            QPushButton#cancelBtn:hover {
+                background-color: #da190b;
+            }
+            QPushButton#clearBtn, QPushButton#undoBtn {
+                background-color: #555;
+                color: white;
+            }
+            QPushButton#clearBtn:hover, QPushButton#undoBtn:hover {
+                background-color: #666;
+            }
+        """)
         self.show()
     
     def exit_refinement(self):
