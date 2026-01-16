@@ -269,16 +269,19 @@ class ExportDialog(QDialog):
     
     讓使用者選擇：
     - 輸出目錄和 Dataset 名稱
+    - Label 名稱
+    - 截圖間隔（每 N 秒 1 幀）
     - 匯出格式（COCO, HuggingFace Parquet, Labelme JSON）
     - Train/Val/Test Split 比例
     - 是否包含被拒絕的物件
     """
     
-    def __init__(self, parent=None, default_name: str = "dataset"):
+    def __init__(self, parent=None, default_name: str = "dataset", video_fps: float = 30.0):
         super().__init__(parent)
         self.setWindowTitle("Export Annotations")
-        self.setMinimumWidth(500)
+        self.setMinimumWidth(520)
         self.default_name = default_name
+        self.video_fps = video_fps
         
         self.setup_ui()
     
@@ -322,6 +325,43 @@ class ExportDialog(QDialog):
         self.name_input.textChanged.connect(self.update_path_preview)
         
         layout.addWidget(output_group)
+        
+        # Label and Frame Interval Settings
+        annotation_group = QGroupBox("Annotation Settings")
+        annotation_layout = QFormLayout()
+        annotation_group.setLayout(annotation_layout)
+        
+        # Label Name
+        self.label_input = QLineEdit("vessel")
+        self.label_input.setPlaceholderText("e.g., vessel, boat, ship")
+        annotation_layout.addRow("Label Name:", self.label_input)
+        
+        # Frame Interval
+        interval_widget = QWidget()
+        interval_layout = QHBoxLayout()
+        interval_layout.setContentsMargins(0, 0, 0, 0)
+        interval_widget.setLayout(interval_layout)
+        
+        self.interval_spin = QDoubleSpinBox()
+        self.interval_spin.setRange(0.0, 60.0)
+        self.interval_spin.setSingleStep(0.5)
+        self.interval_spin.setValue(0.0)  # 0 = export all frames
+        self.interval_spin.setDecimals(1)
+        self.interval_spin.setSuffix(" sec")
+        interval_layout.addWidget(self.interval_spin)
+        
+        self.interval_info = QLabel("")
+        self.interval_info.setStyleSheet("color: gray; font-size: 10px;")
+        interval_layout.addWidget(self.interval_info)
+        interval_layout.addStretch()
+        
+        self.interval_spin.valueChanged.connect(self.update_interval_info)
+        self.update_interval_info()
+        
+        annotation_layout.addRow("Frame Interval:", interval_widget)
+        annotation_layout.addRow("", QLabel("(0 = export all frames)"))
+        
+        layout.addWidget(annotation_group)
         
         # Export Formats
         format_group = QGroupBox("Export Formats")
@@ -415,6 +455,17 @@ class ExportDialog(QDialog):
         name = self.name_input.text() or "dataset"
         self.path_preview.setText(f"→ {output_dir}/{name}/")
     
+    def update_interval_info(self):
+        """更新 frame interval 資訊"""
+        interval = self.interval_spin.value()
+        if interval <= 0:
+            self.interval_info.setText("(all frames)")
+        else:
+            frame_step = int(interval * self.video_fps)
+            if frame_step < 1:
+                frame_step = 1
+            self.interval_info.setText(f"(every {frame_step} frames)")
+    
     def validate_split(self):
         """驗證 split ratio 總和是否為 1.0"""
         total = self.train_spin.value() + self.val_spin.value() + self.test_spin.value()
@@ -451,6 +502,14 @@ class ExportDialog(QDialog):
     def get_dataset_name(self) -> str:
         """取得 dataset 名稱。"""
         return self.name_input.text() or "dataset"
+    
+    def get_label_name(self) -> str:
+        """取得 label 名稱。"""
+        return self.label_input.text().strip() or "vessel"
+    
+    def get_frame_interval(self) -> float:
+        """取得截圖間隔（秒）。0 表示全部幀。"""
+        return self.interval_spin.value()
     
     def get_include_rejected(self) -> bool:
         """是否包含被拒絕的物件。"""
@@ -1210,9 +1269,10 @@ class HILAAMainWindow(QMainWindow):
         
         # 取得預設名稱（影片檔名）
         default_name = Path(self.video_loader.video_path).stem
+        video_fps = self.video_loader.metadata.fps
         
         # 建立 Export 對話框
-        dialog = ExportDialog(self, default_name=default_name)
+        dialog = ExportDialog(self, default_name=default_name, video_fps=video_fps)
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
         
@@ -1225,20 +1285,30 @@ class HILAAMainWindow(QMainWindow):
         formats = dialog.get_selected_formats()
         output_dir = dialog.get_output_dir()
         dataset_name = dialog.get_dataset_name()
+        label_name = dialog.get_label_name()
+        frame_interval = dialog.get_frame_interval()
         include_rejected = dialog.get_include_rejected()
         include_hil_fields = dialog.get_include_hil_fields()
         train_ratio, val_ratio, test_ratio = dialog.get_split_ratios()
+        
+        # 計算 frame step
+        if frame_interval > 0:
+            frame_step = max(1, int(frame_interval * video_fps))
+        else:
+            frame_step = 1  # Export all frames
         
         # 建立 ExportConfig
         config = ExportConfig(
             output_dir=Path(output_dir),
             base_name=dataset_name,
             video_path=str(self.video_loader.video_path),
-            video_fps=self.video_loader.metadata.fps,
+            video_fps=video_fps,
             video_width=self.video_loader.metadata.width,
             video_height=self.video_loader.metadata.height,
             include_rejected=include_rejected,
             include_hil_fields=include_hil_fields,
+            label_name=label_name,
+            frame_step=frame_step,
             train_ratio=train_ratio,
             val_ratio=val_ratio,
             test_ratio=test_ratio
@@ -1264,10 +1334,12 @@ class HILAAMainWindow(QMainWindow):
             progress.close()
             
             # 顯示結果
+            interval_info = f"(every {frame_step} frames)" if frame_step > 1 else "(all frames)"
             msg = (
                 f"Export Complete!\n\n"
-                f"Total Frames: {stats.total_frames}\n"
-                f"Total Annotations: {stats.total_annotations}\n\n"
+                f"Total Frames: {stats.total_frames} {interval_info}\n"
+                f"Total Annotations: {stats.total_annotations}\n"
+                f"Label: {label_name}\n\n"
                 f"Dataset Split (COCO/Parquet):\n"
                 f"  Train: {stats.train_images} images\n"
                 f"  Val: {stats.val_images} images\n"
