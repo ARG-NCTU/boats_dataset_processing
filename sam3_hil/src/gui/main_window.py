@@ -979,7 +979,7 @@ class HILAAMainWindow(QMainWindow):
         
         # Refine 按鈕（點擊修正選中的物件）
         refine_layout = QHBoxLayout()
-        self.refine_btn = QPushButton("🎯 Refine Selected")
+        self.refine_btn = QPushButton("Refine Selected")
         self.refine_btn.setToolTip("Enter refinement mode: Left-click to include, Right-click to exclude")
         self.refine_btn.clicked.connect(self.start_refinement_for_selected)
         self.refine_btn.setEnabled(False)
@@ -1001,7 +1001,7 @@ class HILAAMainWindow(QMainWindow):
         refine_layout.addWidget(self.refine_btn)
         
         # Add Object 按鈕（手動新增物件）
-        self.add_object_btn = QPushButton("➕ Add Object")
+        self.add_object_btn = QPushButton("+ Add Object")
         self.add_object_btn.setToolTip("Add a new object by clicking on the image")
         self.add_object_btn.clicked.connect(self.start_add_object)
         self.add_object_btn.setEnabled(False)
