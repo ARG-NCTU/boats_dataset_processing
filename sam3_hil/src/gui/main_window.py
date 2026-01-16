@@ -11,6 +11,7 @@ Main Components:
 - Object Panel: Lists detected objects with confidence scores
 - Timeline: Frame navigation with review status
 - Controls: Play, pause, navigate, approve/reject
+- Interactive Refinement: Point-based mask editing
 
 Author: Sonic (Maritime Robotics Lab, NYCU)
 """
@@ -47,6 +48,7 @@ from PyQt6.QtWidgets import (
     QSizePolicy,
     QDialog,
     QDialogButtonBox,
+    QScrollArea,
 )
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QThread, QSize
 from PyQt6.QtGui import QImage, QPixmap, QAction, QKeySequence, QColor, QFont
@@ -64,6 +66,7 @@ try:
         VideoAnalysis
     )
     from core.exporter import AnnotationExporter, ExportConfig, ExportStats
+    from gui.interactive_canvas import InteractiveCanvas, RefinementControlPanel, RefinementState
 except ImportError as e:
     print(f"Import error: {e}")
     print("Make sure you're running from the correct directory")
@@ -750,7 +753,8 @@ class HILAAMainWindow(QMainWindow):
     2. 執行 SAM3 偵測
     3. 顯示標註結果
     4. 讓使用者審閱 UNCERTAIN 物件
-    5. 匯出標註結果
+    5. Interactive Refinement（點擊修正 mask）
+    6. 匯出標註結果
     """
     
     def __init__(self):
@@ -769,6 +773,11 @@ class HILAAMainWindow(QMainWindow):
         
         # 物件狀態（審閱結果）
         self.object_status: Dict[int, str] = {}  # obj_id -> status
+        
+        # Refinement 狀態
+        self.refinement_active = False
+        self.refinement_obj_id: Optional[int] = None
+        self.sam3_engine: Optional[SAM3Engine] = None  # Reuse for refinement
         
         # 設定 UI
         self.setup_ui()
@@ -804,13 +813,23 @@ class HILAAMainWindow(QMainWindow):
         left_layout.setContentsMargins(0, 0, 0, 0)
         left_widget.setLayout(left_layout)
         
-        # 影片顯示
-        self.video_label = QLabel()
-        self.video_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.video_label.setMinimumSize(800, 450)
-        self.video_label.setStyleSheet("background-color: #1a1a1a;")
-        self.video_label.setText("Please open a video file\n\nFile → Open Video (Ctrl+O)")
-        left_layout.addWidget(self.video_label, stretch=1)
+        # 影片顯示 (使用 InteractiveCanvas 支援點擊修正)
+        self.video_canvas = InteractiveCanvas()
+        self.video_canvas.setMinimumSize(800, 450)
+        self.video_canvas.setText("Please open a video file\n\nFile → Open Video (Ctrl+O)")
+        self.video_canvas.point_added.connect(self.on_refinement_point_added)
+        left_layout.addWidget(self.video_canvas, stretch=1)
+        
+        # Refinement 控制面板 (浮動在 canvas 上方)
+        self.refinement_panel = RefinementControlPanel(self.video_canvas)
+        self.refinement_panel.clear_clicked.connect(self.on_refinement_clear)
+        self.refinement_panel.undo_clicked.connect(self.on_refinement_undo)
+        self.refinement_panel.apply_clicked.connect(self.on_refinement_apply)
+        self.refinement_panel.cancel_clicked.connect(self.on_refinement_cancel)
+        self.refinement_panel.move(10, 10)  # 左上角
+        
+        # 為了向後相容，保留 video_label 別名
+        self.video_label = self.video_canvas
         
         # 時間軸滑桿
         slider_layout = QHBoxLayout()
@@ -957,9 +976,35 @@ class HILAAMainWindow(QMainWindow):
         batch_layout.addWidget(self.reset_all_btn)
         objects_layout.addLayout(batch_layout)
         
+        # Refine 按鈕（點擊修正選中的物件）
+        refine_layout = QHBoxLayout()
+        self.refine_btn = QPushButton("🎯 Refine Selected")
+        self.refine_btn.setToolTip("Enter refinement mode: Left-click to include, Right-click to exclude")
+        self.refine_btn.clicked.connect(self.start_refinement_for_selected)
+        self.refine_btn.setEnabled(False)
+        self.refine_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #2196F3;
+                color: white;
+                padding: 5px 10px;
+                border-radius: 4px;
+            }
+            QPushButton:hover {
+                background-color: #1976D2;
+            }
+            QPushButton:disabled {
+                background-color: #666;
+                color: #999;
+            }
+        """)
+        refine_layout.addWidget(self.refine_btn)
+        refine_layout.addStretch()
+        objects_layout.addLayout(refine_layout)
+        
         # 物件列表
         self.object_list = QListWidget()
         self.object_list.setMinimumHeight(300)
+        self.object_list.itemSelectionChanged.connect(self.on_object_selection_changed)
         objects_layout.addWidget(self.object_list)
         
         right_layout.addWidget(objects_group)
@@ -1058,6 +1103,24 @@ class HILAAMainWindow(QMainWindow):
         
         # 取得原始幀
         frame = self.video_loader.get_frame(frame_idx)
+        
+        # 如果在 refinement 模式，使用 InteractiveCanvas 的方式顯示
+        if self.refinement_active and frame_idx == self.current_frame:
+            # 轉換 frame 為 QImage
+            rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            h, w, ch = rgb_frame.shape
+            bytes_per_line = ch * w
+            q_image = QImage(rgb_frame.data, w, h, bytes_per_line, QImage.Format.Format_RGB888)
+            
+            # 設置 base image
+            self.video_canvas.set_base_image(q_image)
+            
+            # 更新 UI
+            self.current_frame = frame_idx
+            total = self.video_loader.metadata.total_frames
+            self.frame_label.setText(f"{frame_idx + 1} / {total}")
+            self.timeline_slider.setValue(frame_idx)
+            return
         
         # 如果有偵測結果，疊加視覺化
         if frame_idx in self.sam3_results and (self.show_masks or self.show_boxes):
@@ -1386,6 +1449,9 @@ class HILAAMainWindow(QMainWindow):
             )
             item_widget.status_changed.connect(self.on_object_status_changed)
             
+            # 設置 obj_id property 以便後續取得
+            item_widget.setProperty("obj_id", obj_summary.obj_id)
+            
             item.setSizeHint(item_widget.sizeHint())
             self.object_list.addItem(item)
             self.object_list.setItemWidget(item, item_widget)
@@ -1661,6 +1727,225 @@ class HILAAMainWindow(QMainWindow):
         if self.video_loader:
             self.video_loader.release()
         event.accept()
+    
+    # =========================================================================
+    # Interactive Refinement Methods
+    # =========================================================================
+    
+    def on_object_selection_changed(self):
+        """當物件選擇改變時，更新 Refine 按鈕狀態。"""
+        selected_items = self.object_list.selectedItems()
+        self.refine_btn.setEnabled(len(selected_items) > 0 and not self.refinement_active)
+    
+    def start_refinement_for_selected(self):
+        """開始對選中的物件進行 refinement。"""
+        selected_items = self.object_list.selectedItems()
+        if not selected_items:
+            QMessageBox.warning(self, "Warning", "Please select an object to refine")
+            return
+        
+        # 取得選中物件的 ID
+        item = selected_items[0]
+        item_widget = self.object_list.itemWidget(item)
+        if not item_widget:
+            return
+        
+        # 從 widget 中取得 obj_id（存在 property 中）
+        obj_id = item_widget.property("obj_id")
+        if obj_id is None:
+            return
+        
+        # 取得該物件在當前幀的 mask
+        frame_result = self.sam3_results.get(self.current_frame)
+        if not frame_result:
+            QMessageBox.warning(self, "Warning", "No detection result for current frame")
+            return
+        
+        # 找到對應的 detection
+        target_det = None
+        for det in frame_result.detections:
+            if det.obj_id == obj_id:
+                target_det = det
+                break
+        
+        if target_det is None:
+            QMessageBox.warning(self, "Warning", f"Object {obj_id} not found in current frame")
+            return
+        
+        # 進入 refinement 模式
+        self.refinement_active = True
+        self.refinement_obj_id = obj_id
+        
+        # 設置 canvas 為 refinement 模式
+        self.video_canvas.enter_refinement_mode(
+            obj_id=obj_id,
+            frame_idx=self.current_frame,
+            mask=target_det.mask
+        )
+        
+        # 顯示控制面板
+        score = target_det.score
+        self.refinement_panel.enter_refinement(obj_id, score)
+        
+        # 停止播放
+        self.stop_play()
+        
+        # 禁用其他控制
+        self._set_controls_enabled(False)
+        
+        self.statusBar().showMessage(f"Refinement Mode: Object {obj_id} - Left click to include, Right click to exclude")
+        logger.info(f"Started refinement for object {obj_id}")
+    
+    def on_refinement_point_added(self, x: int, y: int, is_positive: bool):
+        """處理 refinement 點擊。"""
+        if not self.refinement_active:
+            return
+        
+        # 更新點數顯示
+        if self.video_canvas.refinement_state:
+            point_count = len(self.video_canvas.refinement_state.points)
+            self.refinement_panel.set_point_count(point_count)
+        
+        # 執行 SAM3 refinement
+        self._run_refinement()
+    
+    def _run_refinement(self):
+        """執行 SAM3 refinement。"""
+        if not self.video_canvas.refinement_state:
+            return
+        
+        state = self.video_canvas.refinement_state
+        
+        # 取得當前幀圖像
+        frame = self.video_loader.get_frame(self.current_frame)
+        if frame is None:
+            return
+        
+        # 取得 points 和 labels
+        points, labels = state.get_sam_inputs()
+        
+        if len(points) == 0:
+            # 沒有點，顯示原始 mask
+            self.video_canvas.update_refined_mask(state.original_mask)
+            return
+        
+        # 初始化 SAM3 engine（如果還沒有）
+        if self.sam3_engine is None:
+            try:
+                self.sam3_engine = SAM3Engine(mode="auto")
+            except Exception as e:
+                logger.error(f"Failed to initialize SAM3 engine: {e}")
+                # 使用 mock refinement
+                self._run_mock_refinement(points, labels, state.original_mask)
+                return
+        
+        # 執行 refinement（不傳 mask_input，讓 SAM3 純粹根據 point prompts 預測）
+        # 注意：SAM3 的 mask_input 需要是 logits 格式，而我們只有 binary mask
+        try:
+            new_mask = self.sam3_engine.refine_mask(
+                image=frame,
+                points=points,
+                labels=labels,
+                mask_input=None  # 純粹使用 point prompts
+            )
+            
+            # 更新顯示
+            self.video_canvas.update_refined_mask(new_mask)
+            
+        except Exception as e:
+            logger.error(f"Refinement error: {e}")
+            # Fallback to mock
+            self._run_mock_refinement(points, labels, state.original_mask)
+    
+    def _run_mock_refinement(self, points: np.ndarray, labels: np.ndarray, original_mask: np.ndarray):
+        """Mock refinement for testing."""
+        h, w = original_mask.shape
+        result_mask = original_mask.astype(np.float32).copy()
+        
+        for point, label in zip(points, labels):
+            x, y = int(point[0]), int(point[1])
+            radius = 30
+            
+            yy, xx = np.ogrid[:h, :w]
+            circle = ((xx - x) ** 2 + (yy - y) ** 2) <= radius ** 2
+            
+            if label == 1:
+                result_mask = np.maximum(result_mask, circle.astype(np.float32))
+            else:
+                result_mask[circle] = 0
+        
+        self.video_canvas.update_refined_mask(result_mask > 0.5)
+    
+    def on_refinement_clear(self):
+        """清除所有 refinement 點。"""
+        self.video_canvas.clear_points()
+        self.refinement_panel.set_point_count(0)
+        self.display_frame(self.current_frame)  # 重新顯示原始 mask
+    
+    def on_refinement_undo(self):
+        """撤銷上一個 refinement 點。"""
+        self.video_canvas.undo_last_point()
+        
+        if self.video_canvas.refinement_state:
+            point_count = len(self.video_canvas.refinement_state.points)
+            self.refinement_panel.set_point_count(point_count)
+        
+        # 重新計算 mask
+        self._run_refinement()
+    
+    def on_refinement_apply(self):
+        """套用 refinement 結果。"""
+        if not self.refinement_active or not self.video_canvas.refinement_state:
+            return
+        
+        state = self.video_canvas.refinement_state
+        obj_id = state.object_id
+        new_mask = state.current_mask
+        
+        # 更新 sam3_results 中的 mask
+        frame_result = self.sam3_results.get(self.current_frame)
+        if frame_result:
+            for det in frame_result.detections:
+                if det.obj_id == obj_id:
+                    det.mask = new_mask.astype(np.uint8)
+                    logger.info(f"Applied refined mask for object {obj_id}")
+                    break
+        
+        # 退出 refinement 模式
+        self._exit_refinement_mode()
+        
+        # 重新顯示更新後的幀
+        self.display_frame(self.current_frame)
+        
+        self.statusBar().showMessage(f"Refinement applied for object {obj_id}")
+    
+    def on_refinement_cancel(self):
+        """取消 refinement。"""
+        self._exit_refinement_mode()
+        self.display_frame(self.current_frame)
+        self.statusBar().showMessage("Refinement cancelled")
+    
+    def _exit_refinement_mode(self):
+        """退出 refinement 模式。"""
+        self.refinement_active = False
+        self.refinement_obj_id = None
+        
+        self.video_canvas.exit_refinement_mode()
+        self.refinement_panel.exit_refinement()
+        
+        # 重新啟用控制
+        self._set_controls_enabled(True)
+    
+    def _set_controls_enabled(self, enabled: bool):
+        """啟用/禁用控制按鈕。"""
+        self.prev_btn.setEnabled(enabled and self.video_loader is not None)
+        self.next_btn.setEnabled(enabled and self.video_loader is not None)
+        self.play_btn.setEnabled(enabled and self.video_loader is not None)
+        self.timeline_slider.setEnabled(enabled and self.video_loader is not None)
+        self.detect_btn.setEnabled(enabled and self.video_loader is not None)
+        self.accept_all_high_btn.setEnabled(enabled and len(self.sam3_results) > 0)
+        self.reset_all_btn.setEnabled(enabled and len(self.sam3_results) > 0)
+        self.refine_btn.setEnabled(enabled and len(self.object_list.selectedItems()) > 0)
 
 
 # =============================================================================
