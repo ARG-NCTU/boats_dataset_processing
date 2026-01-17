@@ -826,6 +826,7 @@ class HILAAMainWindow(QMainWindow):
         self.refinement_panel.clear_clicked.connect(self.on_refinement_clear)
         self.refinement_panel.undo_clicked.connect(self.on_refinement_undo)
         self.refinement_panel.apply_clicked.connect(self.on_refinement_apply)
+        self.refinement_panel.propagate_clicked.connect(self.on_refinement_propagate)
         self.refinement_panel.cancel_clicked.connect(self.on_refinement_cancel)
         self.refinement_panel.move(10, 10)  # 左上角
         
@@ -979,7 +980,7 @@ class HILAAMainWindow(QMainWindow):
         
         # Refine 按鈕（點擊修正選中的物件）
         refine_layout = QHBoxLayout()
-        self.refine_btn = QPushButton("Refine Selected")
+        self.refine_btn = QPushButton("🎯 Refine Selected")
         self.refine_btn.setToolTip("Enter refinement mode: Left-click to include, Right-click to exclude")
         self.refine_btn.clicked.connect(self.start_refinement_for_selected)
         self.refine_btn.setEnabled(False)
@@ -1001,7 +1002,7 @@ class HILAAMainWindow(QMainWindow):
         refine_layout.addWidget(self.refine_btn)
         
         # Add Object 按鈕（手動新增物件）
-        self.add_object_btn = QPushButton("+ Add Object")
+        self.add_object_btn = QPushButton("➕ Add Object")
         self.add_object_btn.setToolTip("Add a new object by clicking on the image")
         self.add_object_btn.clicked.connect(self.start_add_object)
         self.add_object_btn.setEnabled(False)
@@ -2040,6 +2041,192 @@ class HILAAMainWindow(QMainWindow):
         
         logger.info(f"Added new object {new_obj_id} at frame {self.current_frame}")
         self.statusBar().showMessage(f"Added new object {new_obj_id}")
+    
+    def on_refinement_propagate(self):
+        """套用修改並傳播到後續所有幀。"""
+        if not self.refinement_active or not self.video_canvas.refinement_state:
+            return
+        
+        state = self.video_canvas.refinement_state
+        new_mask = state.current_mask
+        points, labels = state.get_sam_inputs()
+        
+        # 檢查是否有有效的 mask 和 points
+        if new_mask is None or not np.any(new_mask):
+            QMessageBox.warning(self, "Warning", "No valid mask to propagate. Please add points first.")
+            return
+        
+        if len(points) == 0:
+            QMessageBox.warning(self, "Warning", "No points added. Please click to define the object.")
+            return
+        
+        # 確認操作
+        total_frames = self.video_loader.metadata.total_frames
+        remaining_frames = total_frames - self.current_frame - 1
+        
+        if remaining_frames <= 0:
+            QMessageBox.information(self, "Info", "This is the last frame. Use 'Apply' instead.")
+            return
+        
+        reply = QMessageBox.question(
+            self, "Confirm Propagation",
+            f"This will track the object from frame {self.current_frame} to frame {total_frames - 1} "
+            f"({remaining_frames} frames).\n\n"
+            f"This may take a while. Continue?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
+        
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+        
+        # 執行傳播
+        self._propagate_to_following_frames(new_mask, points, labels)
+    
+    def _propagate_to_following_frames(self, mask: np.ndarray, points: np.ndarray, labels: np.ndarray):
+        """使用 SAM3 Video Predictor 傳播到後續幀。"""
+        from core.sam3_engine import Detection, FrameResult
+        
+        state = self.video_canvas.refinement_state
+        start_frame = self.current_frame
+        
+        # 確定 obj_id
+        if self.add_object_mode:
+            # 新增物件：分配新 ID
+            max_obj_id = -1
+            for frame_result in self.sam3_results.values():
+                for det in frame_result.detections:
+                    max_obj_id = max(max_obj_id, det.obj_id)
+            obj_id = max_obj_id + 1
+        else:
+            obj_id = state.object_id
+        
+        # 顯示進度對話框
+        total_frames = self.video_loader.metadata.total_frames
+        remaining = total_frames - start_frame
+        
+        progress = QProgressDialog(
+            f"Propagating object {obj_id} to following frames...",
+            "Cancel", 0, remaining, self
+        )
+        progress.setWindowModality(Qt.WindowModality.WindowModal)
+        progress.setMinimumDuration(0)
+        progress.setValue(0)
+        
+        try:
+            # 嘗試使用 SAM3 Video Predictor
+            if self.sam3_engine is None:
+                self.sam3_engine = SAM3Engine(mode="auto")
+            
+            # 檢查是否支援 video propagation
+            if hasattr(self.sam3_engine, 'propagate_mask'):
+                # 使用 SAM3 video predictor
+                results = self.sam3_engine.propagate_mask(
+                    video_path=str(self.video_loader.video_path),
+                    start_frame=start_frame,
+                    mask=mask,
+                    points=points,
+                    labels=labels,
+                    obj_id=obj_id,
+                    progress_callback=lambda i, n: progress.setValue(i) if not progress.wasCanceled() else None
+                )
+                
+                if progress.wasCanceled():
+                    self.statusBar().showMessage("Propagation cancelled")
+                    return
+                
+                # 更新 sam3_results
+                for frame_idx, frame_mask in results.items():
+                    self._update_or_add_detection(frame_idx, obj_id, frame_mask)
+            else:
+                # Fallback: 簡易傳播（直接複製 mask）
+                logger.warning("SAM3 video propagation not available, using simple copy")
+                self._simple_propagate(obj_id, mask, start_frame, progress)
+            
+            progress.close()
+            
+            # 更新 UI
+            if self.add_object_mode:
+                self.object_status[obj_id] = "accepted"
+            
+            self.video_analysis = self.analyzer.analyze_video(self.sam3_results)
+            self.update_object_list()
+            self.update_analysis_display()
+            
+            # 退出 refinement 模式
+            self._exit_refinement_mode()
+            self.display_frame(self.current_frame)
+            
+            self.statusBar().showMessage(
+                f"Propagated object {obj_id} from frame {start_frame} to {total_frames - 1}"
+            )
+            
+        except Exception as e:
+            progress.close()
+            logger.error(f"Propagation error: {e}")
+            QMessageBox.warning(
+                self, "Propagation Error",
+                f"Failed to propagate: {e}\n\nFalling back to simple copy."
+            )
+            # Fallback
+            self._simple_propagate(obj_id, mask, start_frame, None)
+            self._exit_refinement_mode()
+            self.display_frame(self.current_frame)
+    
+    def _simple_propagate(self, obj_id: int, mask: np.ndarray, start_frame: int, progress: Optional[QProgressDialog]):
+        """簡易傳播：將 mask 複製到後續所有幀（不追蹤）。"""
+        from core.sam3_engine import Detection, FrameResult
+        
+        total_frames = self.video_loader.metadata.total_frames
+        
+        for i, frame_idx in enumerate(range(start_frame, total_frames)):
+            if progress and progress.wasCanceled():
+                break
+            if progress:
+                progress.setValue(i)
+            
+            self._update_or_add_detection(frame_idx, obj_id, mask)
+        
+        if self.add_object_mode:
+            self.object_status[obj_id] = "accepted"
+        
+        self.video_analysis = self.analyzer.analyze_video(self.sam3_results)
+        self.update_object_list()
+    
+    def _update_or_add_detection(self, frame_idx: int, obj_id: int, mask: np.ndarray):
+        """更新或新增特定幀的 detection。"""
+        from core.sam3_engine import Detection, FrameResult
+        
+        # 計算 bounding box
+        ys, xs = np.where(mask)
+        if len(xs) == 0 or len(ys) == 0:
+            return  # Empty mask, skip
+        
+        x_min, x_max = xs.min(), xs.max()
+        y_min, y_max = ys.min(), ys.max()
+        box = np.array([x_min, y_min, x_max - x_min, y_max - y_min])
+        
+        new_detection = Detection(
+            obj_id=obj_id,
+            mask=mask.astype(np.uint8),
+            box=box,
+            score=1.0
+        )
+        
+        if frame_idx not in self.sam3_results:
+            self.sam3_results[frame_idx] = FrameResult(
+                frame_index=frame_idx,
+                detections=[new_detection]
+            )
+        else:
+            # 檢查是否已存在該 obj_id
+            found = False
+            for i, det in enumerate(self.sam3_results[frame_idx].detections):
+                if det.obj_id == obj_id:
+                    self.sam3_results[frame_idx].detections[i] = new_detection
+                    found = True
+                    break
+            if not found:
+                self.sam3_results[frame_idx].detections.append(new_detection)
     
     def on_refinement_cancel(self):
         """取消 refinement。"""
