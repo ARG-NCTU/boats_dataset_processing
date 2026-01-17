@@ -385,12 +385,14 @@ class RefinementControlPanel(QFrame):
     - Clear all points
     - Undo last point
     - Apply refinement / Add object
+    - Propagate to following frames
     - Cancel
     """
     
     clear_clicked = pyqtSignal()
     undo_clicked = pyqtSignal()
     apply_clicked = pyqtSignal()
+    propagate_clicked = pyqtSignal()  # NEW: Propagate to following frames
     cancel_clicked = pyqtSignal()
     
     def __init__(self, parent=None):
@@ -486,20 +488,46 @@ class RefinementControlPanel(QFrame):
         
         layout.addLayout(row1)
         
-        # Buttons row 2: Apply / Cancel
+        # Buttons row 2: Apply (current frame only)
         row2 = QHBoxLayout()
         
-        self.apply_btn = QPushButton("✓ Apply")
+        self.apply_btn = QPushButton("✓ Apply (This Frame)")
         self.apply_btn.setObjectName("applyBtn")
+        self.apply_btn.setToolTip("Apply changes to current frame only")
         self.apply_btn.clicked.connect(self.apply_clicked.emit)
         row2.addWidget(self.apply_btn)
+        
+        layout.addLayout(row2)
+        
+        # Buttons row 3: Propagate (to following frames)
+        row3 = QHBoxLayout()
+        
+        self.propagate_btn = QPushButton("🔄 Propagate →")
+        self.propagate_btn.setObjectName("propagateBtn")
+        self.propagate_btn.setToolTip("Apply and track to all following frames using SAM3 Video")
+        self.propagate_btn.clicked.connect(self.propagate_clicked.emit)
+        self.propagate_btn.setStyleSheet("""
+            QPushButton#propagateBtn {
+                background-color: #9C27B0;
+                color: white;
+            }
+            QPushButton#propagateBtn:hover {
+                background-color: #7B1FA2;
+            }
+        """)
+        row3.addWidget(self.propagate_btn)
+        
+        layout.addLayout(row3)
+        
+        # Buttons row 4: Cancel
+        row4 = QHBoxLayout()
         
         self.cancel_btn = QPushButton("✗ Cancel")
         self.cancel_btn.setObjectName("cancelBtn")
         self.cancel_btn.clicked.connect(self.cancel_clicked.emit)
-        row2.addWidget(self.cancel_btn)
+        row4.addWidget(self.cancel_btn)
         
-        layout.addLayout(row2)
+        layout.addLayout(row4)
     
     def set_object_info(self, obj_id: int, score: float):
         """Update the object info display."""
