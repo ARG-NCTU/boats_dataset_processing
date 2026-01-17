@@ -896,6 +896,14 @@ class HILAAMainWindow(QMainWindow):
         
         left_layout.addLayout(control_layout)
         
+        # Timeline 視覺化
+        from gui.timeline_widget import TimelineWidget
+        self.timeline_widget = TimelineWidget()
+        self.timeline_widget.frame_selected.connect(self.seek_to_frame)
+        self.timeline_widget.object_selected.connect(self.on_timeline_object_selected)
+        self.timeline_widget.setVisible(False)  # 初始隱藏，有資料後再顯示
+        left_layout.addWidget(self.timeline_widget)
+        
         splitter.addWidget(left_widget)
         
         # =====================================================================
@@ -1165,6 +1173,10 @@ class HILAAMainWindow(QMainWindow):
         total = self.video_loader.metadata.total_frames
         self.frame_label.setText(f"{frame_idx + 1} / {total}")
         self.timeline_slider.setValue(frame_idx)
+        
+        # 更新 Timeline 當前幀指示器
+        if hasattr(self, 'timeline_widget'):
+            self.timeline_widget.set_current_frame(frame_idx)
     
     def visualize_frame(
         self, 
@@ -1363,6 +1375,43 @@ class HILAAMainWindow(QMainWindow):
         """滑桿移動。"""
         self.display_frame(value)
     
+    def seek_to_frame(self, frame_idx: int):
+        """跳轉到指定幀（供 Timeline 使用）。"""
+        if self.video_loader is None:
+            return
+        
+        frame_idx = max(0, min(frame_idx, self.video_loader.metadata.total_frames - 1))
+        self.timeline_slider.setValue(frame_idx)
+        self.display_frame(frame_idx)
+    
+    def on_timeline_object_selected(self, obj_id: int):
+        """Timeline 上選擇了物件。"""
+        # 在物件列表中選擇對應的物件
+        for i in range(self.object_list.count()):
+            item = self.object_list.item(i)
+            if item.data(Qt.ItemDataRole.UserRole) == obj_id:
+                self.object_list.setCurrentItem(item)
+                break
+        
+        logger.info(f"Timeline selected object {obj_id}")
+    
+    def update_timeline(self):
+        """更新 Timeline 顯示。"""
+        if not hasattr(self, 'timeline_widget'):
+            return
+        
+        if self.video_loader is None or not self.sam3_results:
+            self.timeline_widget.setVisible(False)
+            return
+        
+        self.timeline_widget.set_data(
+            sam3_results=self.sam3_results,
+            total_frames=self.video_loader.metadata.total_frames,
+            fps=self.video_loader.metadata.fps,
+            object_status=getattr(self, 'object_status', None)
+        )
+        self.timeline_widget.setVisible(True)
+    
     # =========================================================================
     # SAM3 偵測
     # =========================================================================
@@ -1423,6 +1472,9 @@ class HILAAMainWindow(QMainWindow):
         
         # 更新分析顯示
         self.update_analysis_display()
+        
+        # 更新 Timeline
+        self.update_timeline()
         
         # 重新顯示當前幀
         self.display_frame(self.current_frame)
@@ -2035,6 +2087,7 @@ class HILAAMainWindow(QMainWindow):
         self.video_analysis = self.analyzer.analyze_video(self.sam3_results)
         self.update_object_list()
         self.update_analysis_display()
+        self.update_timeline()
         
         # 設定新物件狀態為 accepted
         self.object_status[new_obj_id] = "accepted"
@@ -2151,6 +2204,7 @@ class HILAAMainWindow(QMainWindow):
             self.video_analysis = self.analyzer.analyze_video(self.sam3_results)
             self.update_object_list()
             self.update_analysis_display()
+            self.update_timeline()
             
             # 退出 refinement 模式
             self._exit_refinement_mode()
@@ -2191,6 +2245,7 @@ class HILAAMainWindow(QMainWindow):
         
         self.video_analysis = self.analyzer.analyze_video(self.sam3_results)
         self.update_object_list()
+        self.update_timeline()
     
     def _update_or_add_detection(self, frame_idx: int, obj_id: int, mask: np.ndarray):
         """更新或新增特定幀的 detection。"""
