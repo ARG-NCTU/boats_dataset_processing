@@ -1100,6 +1100,31 @@ class SAM3Engine:
         """Propagate masks through video."""
         return self._engine.propagate(session_id)
     
+    def propagate_mask(
+        self,
+        video_path: str,
+        start_frame: int,
+        mask: np.ndarray,
+        points: np.ndarray,
+        labels: np.ndarray,
+        obj_id: int = 0,
+        progress_callback: Optional[callable] = None
+    ) -> Dict[int, np.ndarray]:
+        """
+        Propagate a mask to following frames using point prompts.
+        
+        Uses SAM3 Tracker for proper object tracking.
+        """
+        return self._engine.propagate_mask(
+            video_path=video_path,
+            start_frame=start_frame,
+            mask=mask,
+            points=points,
+            labels=labels,
+            obj_id=obj_id,
+            progress_callback=progress_callback
+        )
+    
     def reset_session(self, session_id: str) -> None:
         """Reset session state."""
         if hasattr(self._engine, 'reset_session'):
