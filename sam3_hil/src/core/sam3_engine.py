@@ -158,6 +158,34 @@ class BaseSAM3Engine(ABC):
         pass
     
     @abstractmethod
+    def propagate_mask(
+        self,
+        video_path: str,
+        start_frame: int,
+        mask: np.ndarray,
+        points: np.ndarray,
+        labels: np.ndarray,
+        obj_id: int = 0,
+        progress_callback: Optional[callable] = None
+    ) -> Dict[int, np.ndarray]:
+        """
+        Propagate a mask to following frames using point prompts.
+        
+        Args:
+            video_path: Path to the video file
+            start_frame: Frame index to start propagation from
+            mask: Initial mask (H, W) for reference
+            points: Point coordinates (N, 2) used to define the object
+            labels: Point labels (N,) - 1 for positive, 0 for negative
+            obj_id: Object ID to assign
+            progress_callback: Optional callback(current, total) for progress
+            
+        Returns:
+            Dictionary mapping frame_index -> mask (H, W numpy array)
+        """
+        pass
+    
+    @abstractmethod
     def close_session(self, session_id: str) -> None:
         """Close video session and free resources."""
         pass
@@ -384,9 +412,9 @@ class SAM3GPUEngine(BaseSAM3Engine):
         progress_callback: Optional[callable] = None
     ) -> Dict[int, np.ndarray]:
         """
-        Propagate a mask to following frames using SAM3 Video Predictor.
+        Propagate a mask to following frames using SAM3 Tracker Predictor.
         
-        Uses point prompts to track the object through the video.
+        Uses the SAM2-style API (Sam3TrackerPredictor) for proper object tracking.
         
         Args:
             video_path: Path to the video file
@@ -402,7 +430,8 @@ class SAM3GPUEngine(BaseSAM3Engine):
         """
         import torch
         
-        self._load_video_predictor()
+        # Load the tracker model (SAM2-style API)
+        self._load_tracker_model()
         
         # Get video info
         cap = cv2.VideoCapture(video_path)
@@ -411,83 +440,83 @@ class SAM3GPUEngine(BaseSAM3Engine):
         height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
         cap.release()
         
-        # Start a new session
-        response = self._video_predictor.handle_request(
-            request=dict(
-                type="new_session",
-                video_path=video_path,
-            )
-        )
-        session_id = response["session_id"]
+        # Initialize inference state
+        inference_state = self._tracker_predictor.init_state(video_path=video_path)
         
         try:
+            # Clear any previous tracking
+            self._tracker_predictor.clear_all_points_in_video(inference_state)
+            
             # Convert points to relative coordinates (0-1 range)
-            points_rel = points.astype(np.float32).copy()
-            points_rel[:, 0] /= width   # x
-            points_rel[:, 1] /= height  # y
+            points_rel = []
+            for x, y in points:
+                points_rel.append([float(x) / width, float(y) / height])
             
             points_tensor = torch.tensor(points_rel, dtype=torch.float32)
             labels_tensor = torch.tensor(labels.astype(np.int32), dtype=torch.int32)
             
             # Add prompt at start frame
-            response = self._video_predictor.handle_request(
-                request=dict(
-                    type="add_prompt",
-                    session_id=session_id,
-                    frame_index=start_frame,
-                    points=points_tensor,
-                    point_labels=labels_tensor,
-                    obj_id=obj_id,
-                )
+            _, out_obj_ids, low_res_masks, video_res_masks = self._tracker_predictor.add_new_points_or_box(
+                inference_state=inference_state,
+                frame_idx=start_frame,
+                obj_id=obj_id,
+                points=points_tensor,
+                labels=labels_tensor,
             )
+            
+            logger.info(f"Added points for object {obj_id} at frame {start_frame}")
             
             # Propagate through video
             results = {}
             frame_count = 0
+            remaining_frames = total_frames - start_frame
             
-            for response in self._video_predictor.handle_stream_request(
-                request=dict(
-                    type="propagate_in_video",
-                    session_id=session_id,
-                    start_frame_index=start_frame,
-                )
+            for frame_idx, out_obj_ids, low_res_masks, video_res_masks, obj_scores in self._tracker_predictor.propagate_in_video(
+                inference_state,
+                start_frame_idx=start_frame,
+                max_frame_num_to_track=remaining_frames,
+                reverse=False,
+                propagate_preflight=True
             ):
-                frame_idx = response["frame_index"]
-                outputs = response["outputs"]
-                
                 # Extract mask for our object
-                if obj_id in outputs:
-                    mask_data = outputs[obj_id]
-                    if isinstance(mask_data, dict) and "mask" in mask_data:
-                        result_mask = mask_data["mask"]
-                    else:
-                        result_mask = mask_data
-                    
-                    # Convert to numpy if needed
-                    if torch.is_tensor(result_mask):
-                        result_mask = result_mask.cpu().numpy()
-                    
-                    # Ensure 2D
-                    if result_mask.ndim == 3:
-                        result_mask = result_mask[0]
-                    
-                    results[frame_idx] = (result_mask > 0.5).astype(np.uint8)
+                for i, out_obj_id in enumerate(out_obj_ids):
+                    if out_obj_id == obj_id:
+                        result_mask = video_res_masks[i]
+                        
+                        # Convert to numpy
+                        if torch.is_tensor(result_mask):
+                            result_mask = result_mask.cpu().numpy()
+                        
+                        # Ensure correct shape (H, W)
+                        if result_mask.ndim == 4:  # (1, 1, H, W)
+                            result_mask = result_mask[0, 0]
+                        elif result_mask.ndim == 3:  # (1, H, W)
+                            result_mask = result_mask[0]
+                        
+                        results[frame_idx] = (result_mask > 0.0).astype(np.uint8)
+                        break
                 
                 frame_count += 1
                 if progress_callback:
-                    progress_callback(frame_count, total_frames - start_frame)
+                    progress_callback(frame_count, remaining_frames)
             
-            logger.info(f"Propagated to {len(results)} frames")
+            logger.info(f"Propagated object {obj_id} to {len(results)} frames")
             return results
             
         finally:
-            # Close session
-            self._video_predictor.handle_request(
-                request=dict(
-                    type="close_session",
-                    session_id=session_id,
-                )
-            )
+            # Reset the inference state
+            self._tracker_predictor.reset_state(inference_state)
+    
+    def _load_tracker_model(self) -> None:
+        """Load the SAM3 tracker model (SAM2-style API)."""
+        if not hasattr(self, '_tracker_predictor') or self._tracker_predictor is None:
+            logger.info("Loading SAM3 tracker model...")
+            from sam3.model_builder import build_sam3_video_model
+            
+            sam3_model = build_sam3_video_model()
+            self._tracker_predictor = sam3_model.tracker
+            self._tracker_predictor.backbone = sam3_model.detector.backbone
+            logger.info("SAM3 tracker model loaded!")
     
     def start_video_session(self, video_path: str) -> str:
         """
@@ -762,6 +791,68 @@ class SAM3MockEngine(BaseSAM3Engine):
         
         logger.debug(f"Mock refine_mask: {len(points)} points")
         return result_mask > 0.5
+    
+    def propagate_mask(
+        self,
+        video_path: str,
+        start_frame: int,
+        mask: np.ndarray,
+        points: np.ndarray,
+        labels: np.ndarray,
+        obj_id: int = 0,
+        progress_callback: Optional[callable] = None
+    ) -> Dict[int, np.ndarray]:
+        """
+        Mock propagate_mask - simulates tracking with gradual drift.
+        
+        For testing, this creates masks that gradually move to simulate
+        object tracking (with some random drift).
+        """
+        # Get video info
+        cap = cv2.VideoCapture(video_path)
+        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        cap.release()
+        
+        results = {}
+        
+        # Find the center of the initial mask
+        ys, xs = np.where(mask)
+        if len(xs) > 0:
+            center_x = int(xs.mean())
+            center_y = int(ys.mean())
+            mask_w = xs.max() - xs.min()
+            mask_h = ys.max() - ys.min()
+        else:
+            center_x, center_y = width // 2, height // 2
+            mask_w, mask_h = 100, 100
+        
+        remaining = total_frames - start_frame
+        
+        for i, frame_idx in enumerate(range(start_frame, total_frames)):
+            # Simulate tracking with small random movement
+            drift_x = self._rng.integers(-3, 4)
+            drift_y = self._rng.integers(-3, 4)
+            center_x = max(mask_w//2, min(width - mask_w//2, center_x + drift_x))
+            center_y = max(mask_h//2, min(height - mask_h//2, center_y + drift_y))
+            
+            # Create mask at new position
+            frame_mask = np.zeros((height, width), dtype=np.uint8)
+            cv2.ellipse(
+                frame_mask,
+                (center_x, center_y),
+                (mask_w // 2, mask_h // 2),
+                0, 0, 360, 1, -1
+            )
+            
+            results[frame_idx] = frame_mask
+            
+            if progress_callback:
+                progress_callback(i + 1, remaining)
+        
+        logger.info(f"Mock propagated to {len(results)} frames")
+        return results
     
     def start_video_session(self, video_path: str) -> str:
         """Start mock video session."""
