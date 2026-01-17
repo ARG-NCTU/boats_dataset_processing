@@ -373,6 +373,122 @@ class SAM3GPUEngine(BaseSAM3Engine):
                 return mask_input.astype(bool)
             return np.zeros((image.shape[0], image.shape[1]), dtype=bool)
     
+    def propagate_mask(
+        self,
+        video_path: str,
+        start_frame: int,
+        mask: np.ndarray,
+        points: np.ndarray,
+        labels: np.ndarray,
+        obj_id: int = 0,
+        progress_callback: Optional[callable] = None
+    ) -> Dict[int, np.ndarray]:
+        """
+        Propagate a mask to following frames using SAM3 Video Predictor.
+        
+        Uses point prompts to track the object through the video.
+        
+        Args:
+            video_path: Path to the video file
+            start_frame: Frame index to start propagation from
+            mask: Initial mask (H, W) for reference
+            points: Point coordinates (N, 2) used to define the object
+            labels: Point labels (N,) - 1 for positive, 0 for negative
+            obj_id: Object ID to assign
+            progress_callback: Optional callback(current, total) for progress
+            
+        Returns:
+            Dictionary mapping frame_index -> mask (H, W numpy array)
+        """
+        import torch
+        
+        self._load_video_predictor()
+        
+        # Get video info
+        cap = cv2.VideoCapture(video_path)
+        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        cap.release()
+        
+        # Start a new session
+        response = self._video_predictor.handle_request(
+            request=dict(
+                type="new_session",
+                video_path=video_path,
+            )
+        )
+        session_id = response["session_id"]
+        
+        try:
+            # Convert points to relative coordinates (0-1 range)
+            points_rel = points.astype(np.float32).copy()
+            points_rel[:, 0] /= width   # x
+            points_rel[:, 1] /= height  # y
+            
+            points_tensor = torch.tensor(points_rel, dtype=torch.float32)
+            labels_tensor = torch.tensor(labels.astype(np.int32), dtype=torch.int32)
+            
+            # Add prompt at start frame
+            response = self._video_predictor.handle_request(
+                request=dict(
+                    type="add_prompt",
+                    session_id=session_id,
+                    frame_index=start_frame,
+                    points=points_tensor,
+                    point_labels=labels_tensor,
+                    obj_id=obj_id,
+                )
+            )
+            
+            # Propagate through video
+            results = {}
+            frame_count = 0
+            
+            for response in self._video_predictor.handle_stream_request(
+                request=dict(
+                    type="propagate_in_video",
+                    session_id=session_id,
+                    start_frame_index=start_frame,
+                )
+            ):
+                frame_idx = response["frame_index"]
+                outputs = response["outputs"]
+                
+                # Extract mask for our object
+                if obj_id in outputs:
+                    mask_data = outputs[obj_id]
+                    if isinstance(mask_data, dict) and "mask" in mask_data:
+                        result_mask = mask_data["mask"]
+                    else:
+                        result_mask = mask_data
+                    
+                    # Convert to numpy if needed
+                    if torch.is_tensor(result_mask):
+                        result_mask = result_mask.cpu().numpy()
+                    
+                    # Ensure 2D
+                    if result_mask.ndim == 3:
+                        result_mask = result_mask[0]
+                    
+                    results[frame_idx] = (result_mask > 0.5).astype(np.uint8)
+                
+                frame_count += 1
+                if progress_callback:
+                    progress_callback(frame_count, total_frames - start_frame)
+            
+            logger.info(f"Propagated to {len(results)} frames")
+            return results
+            
+        finally:
+            # Close session
+            self._video_predictor.handle_request(
+                request=dict(
+                    type="close_session",
+                    session_id=session_id,
+                )
+            )
+    
     def start_video_session(self, video_path: str) -> str:
         """
         Start a video session.
