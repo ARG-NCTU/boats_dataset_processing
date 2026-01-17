@@ -504,8 +504,11 @@ class SAM3GPUEngine(BaseSAM3Engine):
             return results
             
         finally:
-            # Reset the inference state
-            self._tracker_predictor.reset_state(inference_state)
+            # Clear the tracking state for next use
+            try:
+                self._tracker_predictor.clear_all_points_in_video(inference_state)
+            except Exception as e:
+                logger.debug(f"Could not clear inference state: {e}")
     
     def _load_tracker_model(self) -> None:
         """Load the SAM3 tracker model (SAM2-style API)."""
