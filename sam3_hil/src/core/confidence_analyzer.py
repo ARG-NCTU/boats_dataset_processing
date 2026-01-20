@@ -164,12 +164,29 @@ class VideoAnalysis:
     # Frame analyses
     frame_analyses: Dict[int, FrameAnalysis] = field(default_factory=dict)
     
+    # Actual intervention tracking (updated by GUI)
+    frames_actually_edited: Set[int] = field(default_factory=set)
+    
     @property
-    def human_intervention_rate(self) -> float:
-        """HIR: Percentage of frames needing human review."""
+    def potential_hir(self) -> float:
+        """Potential HIR: Percentage of frames that MIGHT need review (based on confidence)."""
         if self.total_frames == 0:
             return 0.0
         return self.frames_need_review / self.total_frames * 100
+    
+    @property
+    def actual_hir(self) -> float:
+        """Actual HIR: Percentage of frames that user ACTUALLY edited."""
+        if self.total_frames == 0:
+            return 0.0
+        return len(self.frames_actually_edited) / self.total_frames * 100
+    
+    @property
+    def human_intervention_rate(self) -> float:
+        """HIR: Use actual if available, otherwise potential."""
+        if self.frames_actually_edited:
+            return self.actual_hir
+        return self.potential_hir
     
     @property
     def auto_accept_rate(self) -> float:
