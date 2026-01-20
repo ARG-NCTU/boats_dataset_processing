@@ -13,7 +13,7 @@ Features:
 
 import logging
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Set, Tuple
 
 import numpy as np
 from PyQt6.QtCore import Qt, QRect, QPoint, pyqtSignal, QSize
@@ -117,6 +117,7 @@ class TimelineCanvas(QWidget):
         self.total_frames: int = 0
         self.current_frame: int = 0
         self.fps: float = 30.0
+        self.jitter_frames: Set[int] = set()  # Frames with jitter events
         
         # View state
         self.zoom_level: float = 1.0  # pixels per frame
@@ -216,9 +217,47 @@ class TimelineCanvas(QWidget):
         
         # Draw components
         self._draw_ruler(painter)
+        self._draw_jitter_markers(painter)  # Draw jitter before tracks
         self._draw_tracks(painter)
         self._draw_current_frame(painter)
         self._draw_hover_info(painter)
+    
+    def _draw_jitter_markers(self, painter: QPainter):
+        """Draw jitter event markers."""
+        if not self.jitter_frames:
+            return
+        
+        # Draw vertical lines at jitter frames
+        jitter_color = QColor(255, 100, 100, 80)  # Semi-transparent red
+        
+        y_start = self.HEADER_HEIGHT + self.RULER_HEIGHT
+        y_end = self.height()
+        
+        for frame_idx in self.jitter_frames:
+            x = self._frame_to_x(frame_idx)
+            if x < self.LABEL_WIDTH or x > self.width():
+                continue
+            
+            # Draw vertical highlight band
+            bar_width = max(2, int(self.zoom_level))
+            painter.fillRect(x - bar_width // 2, y_start, bar_width, y_end - y_start, jitter_color)
+        
+        # Draw jitter indicator in ruler
+        painter.setPen(QPen(QColor(255, 50, 50), 1))
+        for frame_idx in self.jitter_frames:
+            x = self._frame_to_x(frame_idx)
+            if x < self.LABEL_WIDTH or x > self.width():
+                continue
+            
+            # Small triangle marker
+            painter.setBrush(QBrush(QColor(255, 50, 50)))
+            points = [
+                QPoint(x, self.HEADER_HEIGHT + self.RULER_HEIGHT),
+                QPoint(x - 4, self.HEADER_HEIGHT + self.RULER_HEIGHT - 6),
+                QPoint(x + 4, self.HEADER_HEIGHT + self.RULER_HEIGHT - 6),
+            ]
+            from PyQt6.QtGui import QPolygon
+            painter.drawPolygon(QPolygon(points))
     
     def _draw_ruler(self, painter: QPainter):
         """Draw time ruler at top."""
@@ -534,7 +573,8 @@ class TimelineWidget(QWidget):
         sam3_results: Dict[int, 'FrameResult'],
         total_frames: int,
         fps: float = 30.0,
-        object_status: Optional[Dict[int, str]] = None
+        object_status: Optional[Dict[int, str]] = None,
+        jitter_frames: Optional[List[int]] = None
     ):
         """
         Set timeline data from SAM3 results.
@@ -544,6 +584,7 @@ class TimelineWidget(QWidget):
             total_frames: Total number of frames in video
             fps: Video frame rate
             object_status: Optional dict mapping obj_id -> status
+            jitter_frames: Optional list of frame indices with jitter
         """
         # Build tracks from results
         track_data: Dict[int, Dict[int, float]] = {}  # obj_id -> {frame -> confidence}
@@ -571,13 +612,15 @@ class TimelineWidget(QWidget):
                 color=get_object_color(obj_id)
             ))
         
-        # Update canvas
+        # Update canvas with jitter frames
+        self.canvas.jitter_frames = set(jitter_frames) if jitter_frames else set()
         self.canvas.set_data(tracks, total_frames, fps)
         
         # Update info label
         num_objects = len(tracks)
         num_annotations = sum(len(t.frames) for t in tracks)
-        self.info_label.setText(f"{num_objects} objects, {num_annotations} annotations")
+        jitter_info = f", {len(self.canvas.jitter_frames)} jitter" if self.canvas.jitter_frames else ""
+        self.info_label.setText(f"{num_objects} objects, {num_annotations} annotations{jitter_info}")
     
     def set_current_frame(self, frame: int):
         """Update current frame indicator."""
