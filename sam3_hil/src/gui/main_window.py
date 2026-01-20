@@ -1404,11 +1404,17 @@ class HILAAMainWindow(QMainWindow):
             self.timeline_widget.setVisible(False)
             return
         
+        # 取得 jitter frames
+        jitter_frames = None
+        if hasattr(self, 'jitter_analysis') and self.jitter_analysis:
+            jitter_frames = self.jitter_analysis.get_all_jitter_frames()
+        
         self.timeline_widget.set_data(
             sam3_results=self.sam3_results,
             total_frames=self.video_loader.metadata.total_frames,
             fps=self.video_loader.metadata.fps,
-            object_status=getattr(self, 'object_status', None)
+            object_status=getattr(self, 'object_status', None),
+            jitter_frames=jitter_frames
         )
         self.timeline_widget.setVisible(True)
     
@@ -1467,6 +1473,9 @@ class HILAAMainWindow(QMainWindow):
         # 分析結果
         self.video_analysis = self.analyzer.analyze_video(self.sam3_results)
         
+        # 運行 Jitter Detection
+        self._run_jitter_detection()
+        
         # 更新物件列表
         self.update_object_list()
         
@@ -1482,6 +1491,41 @@ class HILAAMainWindow(QMainWindow):
         self.statusBar().showMessage(
             f"detection completed: {self.video_analysis.unique_objects} objects"
         )
+    
+    def _run_jitter_detection(self):
+        """運行 Jitter Detection 分析時序穩定性。"""
+        if not self.sam3_results:
+            self.jitter_analysis = None
+            return
+        
+        try:
+            from core.jitter_detector import JitterDetector
+            
+            detector = JitterDetector(
+                iou_threshold=0.85,
+                area_change_threshold=0.15
+            )
+            self.jitter_analysis = detector.analyze_video(self.sam3_results)
+            
+            # 記錄結果
+            ja = self.jitter_analysis
+            logger.info(
+                f"Jitter detection: {ja.total_jitter_events} events, "
+                f"{ja.jitter_frame_count} frames, "
+                f"stability: {ja.overall_stability:.1%}"
+            )
+            
+            # 如果有 jitter，提示用戶
+            if ja.jitter_frame_count > 0:
+                jitter_frames = ja.get_all_jitter_frames()[:5]  # 前 5 個
+                frames_str = ", ".join(str(f) for f in jitter_frames)
+                if ja.jitter_frame_count > 5:
+                    frames_str += f"... ({ja.jitter_frame_count} total)"
+                logger.warning(f"Jitter detected at frames: {frames_str}")
+                
+        except Exception as e:
+            logger.error(f"Jitter detection failed: {e}")
+            self.jitter_analysis = None
     
     def on_detection_error(self, error_msg: str):
         """偵測錯誤。"""
@@ -1546,14 +1590,27 @@ class HILAAMainWindow(QMainWindow):
             return
         
         va = self.video_analysis
+        
+        # 計算實際 HIR
+        edited_frames = len(va.frames_actually_edited) if va.frames_actually_edited else 0
+        actual_hir = edited_frames / va.total_frames * 100 if va.total_frames > 0 else 0
+        
+        # Jitter 資訊（如果有）
+        jitter_info = ""
+        if hasattr(self, 'jitter_analysis') and self.jitter_analysis:
+            ja = self.jitter_analysis
+            jitter_info = f"\n\n📊 Stability: {ja.overall_stability:.1%}\nJitter Frames: {ja.jitter_frame_count}"
+        
         text = (
             f"Unique Objects: {va.unique_objects}\n"
             f"Total Detections: {va.total_objects}\n\n"
-            f"HIGH: {va.high_count} ({va.auto_accept_rate:.1f}%)\n"
-            f"UNCERTAIN: {va.uncertain_count}\n"
-            f"LOW: {va.low_count}\n\n"
-            f"HIR: {va.human_intervention_rate:.1f}%\n"
-            f"Frames Need Review: {va.frames_need_review}"
+            f"🟢 HIGH: {va.high_count} ({va.auto_accept_rate:.1f}%)\n"
+            f"🟡 UNCERTAIN: {va.uncertain_count}\n"
+            f"🔴 LOW: {va.low_count}\n\n"
+            f"📋 Potential Review: {va.frames_need_review} frames\n"
+            f"✏️ Actually Edited: {edited_frames} frames\n"
+            f"📈 Actual HIR: {actual_hir:.1f}%"
+            f"{jitter_info}"
         )
         self.analysis_label.setText(text)
     
@@ -2021,6 +2078,9 @@ class HILAAMainWindow(QMainWindow):
             QMessageBox.warning(self, "Warning", "No valid mask to apply. Please add points first.")
             return
         
+        # 追蹤人類介入（記錄編輯的幀）
+        self._track_human_intervention(self.current_frame)
+        
         if self.add_object_mode:
             # === Add New Object Mode ===
             self._add_new_object(new_mask)
@@ -2038,6 +2098,18 @@ class HILAAMainWindow(QMainWindow):
                         break
             
             self.statusBar().showMessage(f"Refinement applied for object {obj_id}")
+        
+        # 退出 refinement 模式
+        self._exit_refinement_mode()
+        
+        # 重新顯示更新後的幀
+        self.display_frame(self.current_frame)
+    
+    def _track_human_intervention(self, frame_idx: int):
+        """追蹤人類介入的幀（用於計算實際 HIR）。"""
+        if self.video_analysis:
+            self.video_analysis.frames_actually_edited.add(frame_idx)
+            logger.debug(f"Human intervention tracked at frame {frame_idx}")
         
         # 退出 refinement 模式
         self._exit_refinement_mode()
@@ -2196,6 +2268,9 @@ class HILAAMainWindow(QMainWindow):
                 self._simple_propagate(obj_id, mask, start_frame, progress)
             
             progress.close()
+            
+            # 追蹤人類介入（只記錄用戶實際編輯的幀，propagate 影響的幀不算）
+            self._track_human_intervention(start_frame)
             
             # 更新 UI
             if self.add_object_mode:
