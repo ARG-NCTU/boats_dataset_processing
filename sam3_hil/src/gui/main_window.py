@@ -1502,8 +1502,8 @@ class HILAAMainWindow(QMainWindow):
             from core.jitter_detector import JitterDetector
             
             detector = JitterDetector(
-                iou_threshold=0.85,
-                area_change_threshold=0.15
+                iou_threshold=0.75,
+                area_change_threshold=0.25
             )
             self.jitter_analysis = detector.analyze_video(self.sam3_results)
             
@@ -1514,7 +1514,11 @@ class HILAAMainWindow(QMainWindow):
                 f"{ja.jitter_frame_count} frames, "
                 f"stability: {ja.overall_stability:.1%}"
             )
-            
+            # 在 _run_jitter_detection 中，logger.info 之後加上：
+            for obj_id, obj_analysis in ja.object_analyses.items():
+                logger.info(f"  Object {obj_id}: jitter_count={obj_analysis.jitter_count}, "
+                            f"avg_iou={obj_analysis.avg_iou:.3f}, "
+                            f"stability={obj_analysis.stability_score:.1%}")
             # 如果有 jitter，提示用戶
             if ja.jitter_frame_count > 0:
                 jitter_frames = ja.get_all_jitter_frames()[:5]  # 前 5 個
@@ -1526,6 +1530,30 @@ class HILAAMainWindow(QMainWindow):
         except Exception as e:
             logger.error(f"Jitter detection failed: {e}")
             self.jitter_analysis = None
+    
+    def _reanalyze_with_preserved_edits(self):
+        """
+        重新分析 SAM3 結果，同時保留已編輯的幀記錄。
+        
+        解決問題：analyze_video() 會創建新的 VideoAnalysis 物件，
+        導致 frames_actually_edited 被重置。
+        """
+        # 1. 保存現有的 edited frames
+        preserved_edits = set()
+        if self.video_analysis and self.video_analysis.frames_actually_edited:
+            preserved_edits = self.video_analysis.frames_actually_edited.copy()
+            logger.debug(f"Preserving {len(preserved_edits)} edited frames before reanalysis")
+        
+        # 2. 重新分析
+        self.video_analysis = self.analyzer.analyze_video(self.sam3_results)
+        
+        # 3. 恢復 edited frames
+        self.video_analysis.frames_actually_edited = preserved_edits
+        
+        # 4. 重新運行 Jitter Detection
+        self._run_jitter_detection()
+        
+        logger.debug(f"Reanalysis complete, {len(preserved_edits)} edited frames restored")
     
     def on_detection_error(self, error_msg: str):
         """偵測錯誤。"""
@@ -2078,8 +2106,7 @@ class HILAAMainWindow(QMainWindow):
             QMessageBox.warning(self, "Warning", "No valid mask to apply. Please add points first.")
             return
         
-        # 追蹤人類介入（記錄編輯的幀）
-        self._track_human_intervention(self.current_frame)
+        edited_frame = self.current_frame
         
         if self.add_object_mode:
             # === Add New Object Mode ===
@@ -2099,6 +2126,17 @@ class HILAAMainWindow(QMainWindow):
             
             self.statusBar().showMessage(f"Refinement applied for object {obj_id}")
         
+        # ====== 關鍵修復：正確的順序 ======
+        # 1. 重新分析（保留已編輯的幀）
+        self._reanalyze_with_preserved_edits()
+        
+        # 2. 追蹤人類介入（在 reanalyze 之後！）
+        self._track_human_intervention(edited_frame)
+        
+        # 3. 更新 UI
+        self.update_object_list()
+        self.update_analysis_display()
+        
         # 退出 refinement 模式
         self._exit_refinement_mode()
         
@@ -2106,16 +2144,18 @@ class HILAAMainWindow(QMainWindow):
         self.display_frame(self.current_frame)
     
     def _track_human_intervention(self, frame_idx: int):
-        """追蹤人類介入的幀（用於計算實際 HIR）。"""
+        """
+        追蹤人類介入的幀（用於計算實際 HIR）。
+        
+        注意：這個函數只負責記錄，不處理 UI 更新。
+        UI 更新由調用者負責。
+        """
         if self.video_analysis:
             self.video_analysis.frames_actually_edited.add(frame_idx)
-            logger.debug(f"Human intervention tracked at frame {frame_idx}")
-        
-        # 退出 refinement 模式
-        self._exit_refinement_mode()
-        
-        # 重新顯示更新後的幀
-        self.display_frame(self.current_frame)
+            logger.info(f"Human intervention tracked at frame {frame_idx}, "
+                       f"total edited: {len(self.video_analysis.frames_actually_edited)}")
+        else:
+            logger.warning(f"Cannot track intervention at frame {frame_idx}: video_analysis is None")
     
     def _add_new_object(self, mask: np.ndarray):
         """新增一個新的物件到結果中。"""
@@ -2155,17 +2195,14 @@ class HILAAMainWindow(QMainWindow):
         else:
             self.sam3_results[self.current_frame].detections.append(new_detection)
         
-        # 重新分析並更新物件列表
-        self.video_analysis = self.analyzer.analyze_video(self.sam3_results)
-        self.update_object_list()
-        self.update_analysis_display()
-        self.update_timeline()
-        
         # 設定新物件狀態為 accepted
         self.object_status[new_obj_id] = "accepted"
         
         logger.info(f"Added new object {new_obj_id} at frame {self.current_frame}")
         self.statusBar().showMessage(f"Added new object {new_obj_id}")
+        
+        # 注意：不在這裡調用 analyze_video 和 UI 更新
+        # 由調用者 on_refinement_apply 負責（避免順序問題）
     
     def on_refinement_propagate(self):
         """套用修改並傳播到後續所有幀。"""
@@ -2269,14 +2306,18 @@ class HILAAMainWindow(QMainWindow):
             
             progress.close()
             
-            # 追蹤人類介入（只記錄用戶實際編輯的幀，propagate 影響的幀不算）
-            self._track_human_intervention(start_frame)
-            
-            # 更新 UI
+            # 更新 object status
             if self.add_object_mode:
                 self.object_status[obj_id] = "accepted"
             
-            self.video_analysis = self.analyzer.analyze_video(self.sam3_results)
+            # ====== 關鍵修復：正確的順序 ======
+            # 1. 重新分析（保留已編輯的幀）
+            self._reanalyze_with_preserved_edits()
+            
+            # 2. 追蹤人類介入（在 reanalyze 之後！）
+            self._track_human_intervention(start_frame)
+            
+            # 3. 更新 UI
             self.update_object_list()
             self.update_analysis_display()
             self.update_timeline()
@@ -2298,6 +2339,15 @@ class HILAAMainWindow(QMainWindow):
             )
             # Fallback
             self._simple_propagate(obj_id, mask, start_frame, None)
+            
+            # 更新 object status
+            if self.add_object_mode:
+                self.object_status[obj_id] = "accepted"
+            
+            # 同樣需要正確順序
+            self._reanalyze_with_preserved_edits()
+            self._track_human_intervention(start_frame)
+            self.update_object_list()
             self._exit_refinement_mode()
             self.display_frame(self.current_frame)
     
@@ -2315,12 +2365,8 @@ class HILAAMainWindow(QMainWindow):
             
             self._update_or_add_detection(frame_idx, obj_id, mask)
         
-        if self.add_object_mode:
-            self.object_status[obj_id] = "accepted"
-        
-        self.video_analysis = self.analyzer.analyze_video(self.sam3_results)
-        self.update_object_list()
-        self.update_timeline()
+        # 注意：不在這裡調用 analyze_video 和 track_human_intervention
+        # 由調用者 _propagate_to_following_frames 負責（避免重複調用和順序問題）
     
     def _update_or_add_detection(self, frame_idx: int, obj_id: int, mask: np.ndarray):
         """更新或新增特定幀的 detection。"""
