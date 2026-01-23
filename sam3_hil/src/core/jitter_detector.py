@@ -209,6 +209,9 @@ class JitterDetector:
     
     def compute_area_change(self, area1: int, area2: int) -> float:
         """Compute relative area change."""
+        # 強制轉換為 Python int 避免 numpy integer overflow
+        area1 = int(area1)
+        area2 = int(area2)
         if area1 == 0:
             return 1.0 if area2 > 0 else 0.0
         return (area2 - area1) / area1
@@ -243,7 +246,8 @@ class JitterDetector:
         
         for frame_idx in sorted_frames:
             mask = masks_by_frame[frame_idx]
-            area = mask.sum() if mask is not None else 0
+            # 強制轉換為 Python int 避免 numpy integer overflow
+            area = int(mask.sum()) if mask is not None else 0
             
             if prev_frame is not None:
                 # Check for appearance/disappearance
