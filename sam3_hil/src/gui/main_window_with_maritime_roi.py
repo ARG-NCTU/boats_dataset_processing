@@ -13,7 +13,7 @@ Main Components:
 - Controls: Play, pause, navigate, approve/reject
 - Interactive Refinement: Point-based mask editing
 
-Author: Sonic (Maritime Robotics Lab, NYCU)
+Author: Adam (Assistive Robotics Lab, NYCU)
 """
 
 import sys
@@ -1888,12 +1888,12 @@ class HILAAMainWindow(QMainWindow):
         text = (
             f"Unique Objects: {va.unique_objects}\n"
             f"Total Detections: {va.total_objects}\n\n"
-            f"🟢 HIGH: {va.high_count} ({va.auto_accept_rate:.1f}%)\n"
-            f"🟡 UNCERTAIN: {va.uncertain_count}\n"
-            f"🔴 LOW: {va.low_count}\n\n"
-            f"📋 Potential Review: {va.frames_need_review} frames\n"
-            f"✏️ Actually Edited: {edited_frames} frames\n"
-            f"📈 Actual HIR: {actual_hir:.1f}%"
+            f"HIGH: {va.high_count} ({va.auto_accept_rate:.1f}%)\n"
+            f"UNCERTAIN: {va.uncertain_count}\n"
+            f"LOW: {va.low_count}\n\n"
+            f"Potential Review: {va.frames_need_review} frames\n"
+            f"Actually Edited: {edited_frames} frames\n"
+            f"Actual HIR: {actual_hir:.1f}%"
             f"{jitter_info}"
         )
         self.analysis_label.setText(text)
