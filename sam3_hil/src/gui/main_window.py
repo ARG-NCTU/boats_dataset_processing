@@ -13,7 +13,7 @@ Main Components:
 - Controls: Play, pause, navigate, approve/reject
 - Interactive Refinement: Point-based mask editing
 
-Author: Sonic (Maritime Robotics Lab, NYCU)
+Author: Adam (Assistive Robotics Lab, NYCU)
 """
 
 import sys
@@ -367,7 +367,7 @@ class ExportDialog(QDialog):
         self.new_label_input.setPlaceholderText("Enter new label name...")
         add_label_layout.addWidget(self.new_label_input)
         
-        add_label_btn = QPushButton("+ Add Label")
+        add_label_btn = QPushButton("Add Label")
         add_label_btn.clicked.connect(self.add_label)
         add_label_layout.addWidget(add_label_btn)
         
@@ -635,7 +635,7 @@ class ExportDialog(QDialog):
             tag_label = QLabel(label)
             tag_layout.addWidget(tag_label)
             
-            remove_btn = QPushButton("×")
+            remove_btn = QPushButton("✗")
             remove_btn.setFixedSize(20, 20)
             remove_btn.setStyleSheet("background: none; border: none; color: #666;")
             remove_btn.clicked.connect(lambda checked, l=label: self.remove_label(l))
@@ -988,7 +988,7 @@ class HILAAMainWindow(QMainWindow):
         
         # Refine 按鈕（點擊修正選中的物件）
         refine_layout = QHBoxLayout()
-        self.refine_btn = QPushButton("🎯 Refine Selected")
+        self.refine_btn = QPushButton("Refine Selected")
         self.refine_btn.setToolTip("Enter refinement mode: Left-click to include, Right-click to exclude")
         self.refine_btn.clicked.connect(self.start_refinement_for_selected)
         self.refine_btn.setEnabled(False)
@@ -1010,7 +1010,7 @@ class HILAAMainWindow(QMainWindow):
         refine_layout.addWidget(self.refine_btn)
         
         # Add Object 按鈕（手動新增物件）
-        self.add_object_btn = QPushButton("➕ Add Object")
+        self.add_object_btn = QPushButton("+ Add Object")
         self.add_object_btn.setToolTip("Add a new object by clicking on the image")
         self.add_object_btn.clicked.connect(self.start_add_object)
         self.add_object_btn.setEnabled(False)
@@ -1627,17 +1627,17 @@ class HILAAMainWindow(QMainWindow):
         jitter_info = ""
         if hasattr(self, 'jitter_analysis') and self.jitter_analysis:
             ja = self.jitter_analysis
-            jitter_info = f"\n\n📊 Stability: {ja.overall_stability:.1%}\nJitter Frames: {ja.jitter_frame_count}"
+            jitter_info = f"\n\nStability: {ja.overall_stability:.1%}\nJitter Frames: {ja.jitter_frame_count}"
         
         text = (
             f"Unique Objects: {va.unique_objects}\n"
             f"Total Detections: {va.total_objects}\n\n"
-            f"🟢 HIGH: {va.high_count} ({va.auto_accept_rate:.1f}%)\n"
-            f"🟡 UNCERTAIN: {va.uncertain_count}\n"
-            f"🔴 LOW: {va.low_count}\n\n"
-            f"📋 Potential Review: {va.frames_need_review} frames\n"
-            f"✏️ Actually Edited: {edited_frames} frames\n"
-            f"📈 Actual HIR: {actual_hir:.1f}%"
+            f"HIGH: {va.high_count} ({va.auto_accept_rate:.1f}%)\n"
+            f"UNCERTAIN: {va.uncertain_count}\n"
+            f"LOW: {va.low_count}\n\n"
+            f"Potential Review: {va.frames_need_review} frames\n"
+            f"Actually Edited: {edited_frames} frames\n"
+            f"Actual HIR: {actual_hir:.1f}%"
             f"{jitter_info}"
         )
         self.analysis_label.setText(text)
@@ -1849,8 +1849,8 @@ class HILAAMainWindow(QMainWindow):
             "HIL-AA Maritime Annotation Tool\n\n"
             "Human-in-the-Loop Active Annotation\n"
             "for Maritime Video using SAM3\n\n"
-            "Author: Sonic\n"
-            "Maritime Robotics Lab, NYCU\n\n"
+            "Author: Adam\n"
+            "Assistive Robotics Lab, NYCU\n\n"
             "Key Innovation:\n"
             "Use SAM3 confidence scores to minimize\n"
             "human annotation effort by 5-10x"
