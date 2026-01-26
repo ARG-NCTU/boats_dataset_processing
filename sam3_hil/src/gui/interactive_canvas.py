@@ -7,7 +7,7 @@ Features:
 - Real-time mask update preview
 - Undo/Clear/Apply/Cancel controls
 
-Author: Sonic
+Author: Adam
 Date: 2025-01
 """
 
@@ -445,7 +445,7 @@ class RefinementControlPanel(QFrame):
         self.setLayout(layout)
         
         # Title
-        self.title_label = QLabel("🎯 Refinement Mode")
+        self.title_label = QLabel("Refinement Mode")
         self.title_label.setStyleSheet("color: #4CAF50; font-size: 14px; font-weight: bold;")
         self.title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(self.title_label)
@@ -502,7 +502,7 @@ class RefinementControlPanel(QFrame):
         # Buttons row 3: Propagate (to following frames)
         row3 = QHBoxLayout()
         
-        self.propagate_btn = QPushButton("🔄 Propagate →")
+        self.propagate_btn = QPushButton("Propagate →")
         self.propagate_btn.setObjectName("propagateBtn")
         self.propagate_btn.setToolTip("Apply and track to all following frames using SAM3 Video")
         self.propagate_btn.clicked.connect(self.propagate_clicked.emit)
@@ -540,7 +540,7 @@ class RefinementControlPanel(QFrame):
     def enter_refinement(self, obj_id: int, score: float = 0.0):
         """Show the panel for refinement mode."""
         self.mode = "refinement"
-        self.title_label.setText("🎯 Refinement Mode")
+        self.title_label.setText("Refinement Mode")
         self.title_label.setStyleSheet("color: #4CAF50; font-size: 14px; font-weight: bold;")
         self.setStyleSheet(self.styleSheet().replace("#2196F3", "#4CAF50"))
         self.set_object_info(obj_id, score)
@@ -551,7 +551,7 @@ class RefinementControlPanel(QFrame):
     def enter_add_object(self):
         """Show the panel for add object mode."""
         self.mode = "add_object"
-        self.title_label.setText("➕ Add New Object")
+        self.title_label.setText("+ Add New Object")
         self.title_label.setStyleSheet("color: #2196F3; font-size: 14px; font-weight: bold;")
         self.object_label.setText("Click to define new object")
         self.set_point_count(0)
