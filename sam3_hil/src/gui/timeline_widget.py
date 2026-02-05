@@ -526,7 +526,7 @@ class TimelineWidget(QWidget):
         header_layout = QHBoxLayout(header)
         header_layout.setContentsMargins(10, 5, 10, 5)
         
-        title = QLabel("📊 Timeline")
+        title = QLabel("Timeline")
         title.setStyleSheet("font-weight: bold; font-size: 12px;")
         header_layout.addWidget(title)
         
