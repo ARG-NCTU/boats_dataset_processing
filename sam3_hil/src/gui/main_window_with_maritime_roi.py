@@ -23,6 +23,8 @@ from typing import Dict, List, Optional, Tuple
 
 import cv2
 import numpy as np
+import gc
+import torch
 
 from PyQt6.QtWidgets import (
     QApplication,
@@ -74,6 +76,30 @@ except ImportError as e:
 
 logger = logging.getLogger(__name__)
 
+# =============================================================================
+# GPU Memory Cleanup Utility
+# =============================================================================
+
+def clear_gpu_memory():
+    """
+    清理 GPU 記憶體，避免連續執行偵測時發生 OOM。
+    
+    調用時機：
+    - 每次偵測開始前
+    - Worker 執行緒開始時
+    """
+    # 清理 Python 垃圾收集
+    gc.collect()
+    
+    # 清理 PyTorch CUDA 快取
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+        torch.cuda.synchronize()
+        
+        # 記錄清理後的記憶體狀態
+        allocated = torch.cuda.memory_allocated() / 1024**3
+        reserved = torch.cuda.memory_reserved() / 1024**3
+        logger.info(f"GPU memory cleared: {allocated:.2f} GB allocated, {reserved:.2f} GB reserved")
 
 # =============================================================================
 # Worker Thread for SAM3 Processing
@@ -109,6 +135,10 @@ class SAM3Worker(QThread):
         session_id = None
         
         try:
+            # 清理 GPU 記憶體
+            self.progress.emit(5, "Clearing GPU memory...")
+            clear_gpu_memory()
+
             self.progress.emit(10, "Loading SAM3 model...")
             logger.info(f"Worker starting: video={self.video_path}, prompt={self.prompt}, mode={self.mode}")
             
@@ -635,7 +665,7 @@ class ExportDialog(QDialog):
             tag_label = QLabel(label)
             tag_layout.addWidget(tag_label)
             
-            remove_btn = QPushButton("×")
+            remove_btn = QPushButton("✗")
             remove_btn.setFixedSize(20, 20)
             remove_btn.setStyleSheet("background: none; border: none; color: #666;")
             remove_btn.clicked.connect(lambda checked, l=label: self.remove_label(l))
@@ -1022,7 +1052,7 @@ class HILAAMainWindow(QMainWindow):
         
         # Refine 按鈕（點擊修正選中的物件）
         refine_layout = QHBoxLayout()
-        self.refine_btn = QPushButton("🎯 Refine Selected")
+        self.refine_btn = QPushButton("Refine Selected")
         self.refine_btn.setToolTip("Enter refinement mode: Left-click to include, Right-click to exclude")
         self.refine_btn.clicked.connect(self.start_refinement_for_selected)
         self.refine_btn.setEnabled(False)
@@ -1044,7 +1074,7 @@ class HILAAMainWindow(QMainWindow):
         refine_layout.addWidget(self.refine_btn)
         
         # Add Object 按鈕（手動新增物件）
-        self.add_object_btn = QPushButton("➕ Add Object")
+        self.add_object_btn = QPushButton("+ Add Object")
         self.add_object_btn.setToolTip("Add a new object by clicking on the image")
         self.add_object_btn.clicked.connect(self.start_add_object)
         self.add_object_btn.setEnabled(False)
@@ -1464,7 +1494,9 @@ class HILAAMainWindow(QMainWindow):
         """執行 SAM3 偵測。"""
         if self.video_loader is None:
             return
-        
+            
+        clear_gpu_memory()
+
         prompt = self.prompt_input.text().strip()
         if not prompt:
             QMessageBox.warning(self, "Warning", "Please enter a detection prompt")
@@ -1883,7 +1915,7 @@ class HILAAMainWindow(QMainWindow):
         jitter_info = ""
         if hasattr(self, 'jitter_analysis') and self.jitter_analysis:
             ja = self.jitter_analysis
-            jitter_info = f"\n\n📊 Stability: {ja.overall_stability:.1%}\nJitter Frames: {ja.jitter_frame_count}"
+            jitter_info = f"\n\nStability: {ja.overall_stability:.1%}\nJitter Frames: {ja.jitter_frame_count}"
         
         text = (
             f"Unique Objects: {va.unique_objects}\n"
