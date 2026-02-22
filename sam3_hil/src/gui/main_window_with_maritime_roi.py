@@ -12,6 +12,7 @@ Main Components:
 - Timeline: Frame navigation with review status
 - Controls: Play, pause, navigate, approve/reject
 - Interactive Refinement: Point-based mask editing
+- Object Management: Delete, merge, swap labels (NEW)
 
 Author: Adam (Assistive Robotics Lab, NYCU)
 """
@@ -19,7 +20,7 @@ Author: Adam (Assistive Robotics Lab, NYCU)
 import sys
 import logging
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Set
 
 import cv2
 import numpy as np
@@ -51,8 +52,10 @@ from PyQt6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
     QScrollArea,
+    QMenu,
+    QInputDialog,
 )
-from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QThread, QSize
+from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QThread, QSize, QPoint
 from PyQt6.QtGui import QImage, QPixmap, QAction, QKeySequence, QColor, QFont
 
 # 加入專案路徑
@@ -61,7 +64,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 # Import our modules
 try:
     from core.video_loader import VideoLoader
-    from core.sam3_engine import SAM3Engine, FrameResult, visualize_frame_results
+    from core.sam3_engine import SAM3Engine, FrameResult, visualize_frame_results, Detection
     from core.confidence_analyzer import (
         ConfidenceAnalyzer, 
         ConfidenceCategory,
@@ -181,6 +184,65 @@ class SAM3Worker(QThread):
                 pass
             
             self.error.emit(error_msg)
+
+
+# =============================================================================
+# Object Selection Dialog (for Merge/Swap operations)
+# =============================================================================
+
+class ObjectSelectionDialog(QDialog):
+    """
+    物件選擇對話框，用於 Merge 和 Swap 操作。
+    """
+    
+    def __init__(
+        self, 
+        parent=None, 
+        title: str = "Select Object",
+        message: str = "Please select an object:",
+        objects: List[Tuple[int, float]] = None,  # [(obj_id, score), ...]
+        exclude_obj_id: int = None
+    ):
+        super().__init__(parent)
+        self.setWindowTitle(title)
+        self.setMinimumWidth(300)
+        
+        self.objects = objects or []
+        self.exclude_obj_id = exclude_obj_id
+        self.selected_obj_id = None
+        
+        self.setup_ui(message)
+    
+    def setup_ui(self, message: str):
+        layout = QVBoxLayout()
+        self.setLayout(layout)
+        
+        # 訊息
+        msg_label = QLabel(message)
+        msg_label.setWordWrap(True)
+        layout.addWidget(msg_label)
+        
+        # 物件列表
+        self.object_combo = QComboBox()
+        for obj_id, score in self.objects:
+            if obj_id != self.exclude_obj_id:
+                self.object_combo.addItem(f"Object {obj_id} (score: {score:.2f})", obj_id)
+        layout.addWidget(self.object_combo)
+        
+        # 按鈕
+        button_box = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | 
+            QDialogButtonBox.StandardButton.Cancel
+        )
+        button_box.accepted.connect(self.accept)
+        button_box.rejected.connect(self.reject)
+        layout.addWidget(button_box)
+    
+    def get_selected_obj_id(self) -> Optional[int]:
+        """取得選中的物件 ID。"""
+        if self.object_combo.count() > 0:
+            return self.object_combo.currentData()
+        return None
 
 
 # =============================================================================
@@ -784,7 +846,8 @@ class HILAAMainWindow(QMainWindow):
     3. 顯示標註結果
     4. 讓使用者審閱 UNCERTAIN 物件
     5. Interactive Refinement（點擊修正 mask）
-    6. 匯出標註結果
+    6. Object Management（刪除、合併、交換標籤）- NEW
+    7. 匯出標註結果
     """
     
     def __init__(self):
@@ -1098,11 +1161,18 @@ class HILAAMainWindow(QMainWindow):
         refine_layout.addStretch()
         objects_layout.addLayout(refine_layout)
         
-        # 物件列表
+        # 物件列表 (啟用右鍵選單)
         self.object_list = QListWidget()
         self.object_list.setMinimumHeight(300)
         self.object_list.itemSelectionChanged.connect(self.on_object_selection_changed)
+        self.object_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.object_list.customContextMenuRequested.connect(self.show_object_context_menu)
         objects_layout.addWidget(self.object_list)
+        
+        # 物件管理提示
+        manage_hint = QLabel("💡 Right-click on object for more options")
+        manage_hint.setStyleSheet("color: #888; font-size: 10px;")
+        objects_layout.addWidget(manage_hint)
         
         right_layout.addWidget(objects_group)
         
@@ -1168,6 +1238,341 @@ class HILAAMainWindow(QMainWindow):
         # 空白鍵：播放/暫停
         # 左右鍵：上一幀/下一幀（在 keyPressEvent 處理）
         pass
+    
+    # =========================================================================
+    # Object Management Methods (NEW)
+    # =========================================================================
+    
+    def show_object_context_menu(self, position: QPoint):
+        """顯示物件右鍵選單。"""
+        item = self.object_list.itemAt(position)
+        if item is None:
+            return
+        
+        widget = self.object_list.itemWidget(item)
+        if widget is None:
+            return
+        
+        obj_id = widget.property("obj_id")
+        if obj_id is None:
+            return
+        
+        # 建立右鍵選單
+        menu = QMenu(self)
+        
+        # 刪除物件
+        delete_action = menu.addAction("🗑️ Delete Object (All Frames)")
+        delete_action.triggered.connect(lambda: self.delete_object(obj_id))
+        
+        delete_from_action = menu.addAction("🗑️ Delete From Current Frame")
+        delete_from_action.triggered.connect(lambda: self.delete_object_from_frame(obj_id, self.current_frame))
+        
+        menu.addSeparator()
+        
+        # 合併物件
+        merge_action = menu.addAction("🔗 Merge Into Another Object...")
+        merge_action.triggered.connect(lambda: self.show_merge_dialog(obj_id))
+        
+        # 交換標籤
+        swap_action = menu.addAction("🔄 Swap Label With...")
+        swap_action.triggered.connect(lambda: self.show_swap_dialog(obj_id))
+        
+        menu.addSeparator()
+        
+        # 跳轉到物件首次出現的幀
+        jump_action = menu.addAction("📍 Jump to First Appearance")
+        jump_action.triggered.connect(lambda: self.jump_to_object_first_frame(obj_id))
+        
+        # 顯示選單
+        menu.exec(self.object_list.mapToGlobal(position))
+    
+    def delete_object(self, obj_id: int):
+        """
+        完全刪除物件（從所有幀中移除）。
+        
+        Args:
+            obj_id: 要刪除的物件 ID
+        """
+        # 確認操作
+        reply = QMessageBox.question(
+            self, "Confirm Delete",
+            f"Delete Object {obj_id} from ALL frames?\n\nThis action cannot be undone.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
+        
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+        
+        # 從所有幀中移除該物件
+        deleted_count = 0
+        for frame_idx, frame_result in self.sam3_results.items():
+            original_count = len(frame_result.detections)
+            frame_result.detections = [
+                d for d in frame_result.detections if d.obj_id != obj_id
+            ]
+            deleted_count += original_count - len(frame_result.detections)
+        
+        # 移除物件狀態
+        if obj_id in self.object_status:
+            del self.object_status[obj_id]
+        
+        logger.info(f"Deleted object {obj_id}: removed {deleted_count} detections")
+        
+        # 更新 UI
+        self._reanalyze_with_preserved_edits()
+        self.update_object_list()
+        self.update_analysis_display()
+        self.update_timeline()
+        self.display_frame(self.current_frame)
+        
+        self.statusBar().showMessage(f"Deleted Object {obj_id} ({deleted_count} detections removed)")
+    
+    def delete_object_from_frame(self, obj_id: int, from_frame: int):
+        """
+        從指定幀開始刪除物件（保留之前的幀）。
+        
+        Args:
+            obj_id: 要刪除的物件 ID
+            from_frame: 從此幀開始刪除
+        """
+        if self.video_loader is None:
+            return
+        
+        total_frames = self.video_loader.metadata.total_frames
+        
+        # 確認操作
+        reply = QMessageBox.question(
+            self, "Confirm Delete",
+            f"Delete Object {obj_id} from frame {from_frame} to {total_frames - 1}?\n\n"
+            f"Frames 0 to {from_frame - 1} will be preserved.\n"
+            "This action cannot be undone.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
+        
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+        
+        # 從指定幀開始移除
+        deleted_count = 0
+        for frame_idx in range(from_frame, total_frames):
+            if frame_idx in self.sam3_results:
+                frame_result = self.sam3_results[frame_idx]
+                original_count = len(frame_result.detections)
+                frame_result.detections = [
+                    d for d in frame_result.detections if d.obj_id != obj_id
+                ]
+                deleted_count += original_count - len(frame_result.detections)
+        
+        logger.info(f"Deleted object {obj_id} from frame {from_frame}: removed {deleted_count} detections")
+        
+        # 更新 UI
+        self._reanalyze_with_preserved_edits()
+        self.update_object_list()
+        self.update_analysis_display()
+        self.update_timeline()
+        self.display_frame(self.current_frame)
+        
+        self.statusBar().showMessage(
+            f"Deleted Object {obj_id} from frame {from_frame} onwards ({deleted_count} detections removed)"
+        )
+    
+    def show_merge_dialog(self, source_obj_id: int):
+        """
+        顯示合併物件對話框。
+        
+        Args:
+            source_obj_id: 要合併的來源物件 ID（將被合併到目標物件）
+        """
+        # 收集所有物件資訊
+        objects = self._get_all_object_info()
+        
+        if len(objects) < 2:
+            QMessageBox.warning(self, "Warning", "Need at least 2 objects to merge")
+            return
+        
+        dialog = ObjectSelectionDialog(
+            self,
+            title="Merge Object",
+            message=f"Merge Object {source_obj_id} INTO which object?\n\n"
+                    f"Object {source_obj_id} will be deleted and its detections "
+                    f"will be assigned to the target object.",
+            objects=objects,
+            exclude_obj_id=source_obj_id
+        )
+        
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            target_obj_id = dialog.get_selected_obj_id()
+            if target_obj_id is not None:
+                self.merge_objects(source_obj_id, target_obj_id)
+    
+    def merge_objects(self, source_obj_id: int, target_obj_id: int):
+        """
+        合併兩個物件：將 source 合併到 target。
+        
+        如果同一幀兩者都有 mask，保留 target 的。
+        
+        Args:
+            source_obj_id: 來源物件 ID（將被刪除）
+            target_obj_id: 目標物件 ID（保留）
+        """
+        merged_count = 0
+        
+        for frame_idx, frame_result in self.sam3_results.items():
+            # 找到 source 和 target 的 detection
+            source_det = None
+            target_det = None
+            source_idx = None
+            
+            for i, det in enumerate(frame_result.detections):
+                if det.obj_id == source_obj_id:
+                    source_det = det
+                    source_idx = i
+                elif det.obj_id == target_obj_id:
+                    target_det = det
+            
+            if source_det is not None:
+                if target_det is None:
+                    # target 在這幀沒有 detection，將 source 改為 target
+                    source_det.obj_id = target_obj_id
+                    merged_count += 1
+                else:
+                    # 兩者都有，保留 target，移除 source
+                    frame_result.detections.pop(source_idx)
+        
+        # 移除 source 物件狀態
+        if source_obj_id in self.object_status:
+            del self.object_status[source_obj_id]
+        
+        logger.info(f"Merged object {source_obj_id} into {target_obj_id}: {merged_count} detections transferred")
+        
+        # 更新 UI
+        self._reanalyze_with_preserved_edits()
+        self.update_object_list()
+        self.update_analysis_display()
+        self.update_timeline()
+        self.display_frame(self.current_frame)
+        
+        self.statusBar().showMessage(
+            f"Merged Object {source_obj_id} into Object {target_obj_id} ({merged_count} detections transferred)"
+        )
+    
+    def show_swap_dialog(self, obj_id_a: int):
+        """
+        顯示交換標籤對話框。
+        
+        Args:
+            obj_id_a: 第一個物件 ID
+        """
+        # 收集所有物件資訊
+        objects = self._get_all_object_info()
+        
+        if len(objects) < 2:
+            QMessageBox.warning(self, "Warning", "Need at least 2 objects to swap")
+            return
+        
+        dialog = ObjectSelectionDialog(
+            self,
+            title="Swap Labels",
+            message=f"Swap Object {obj_id_a} label with which object?\n\n"
+                    f"This will exchange the object IDs in ALL frames.",
+            objects=objects,
+            exclude_obj_id=obj_id_a
+        )
+        
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            obj_id_b = dialog.get_selected_obj_id()
+            if obj_id_b is not None:
+                self.swap_object_labels(obj_id_a, obj_id_b)
+    
+    def swap_object_labels(self, obj_id_a: int, obj_id_b: int):
+        """
+        交換兩個物件的標籤（在所有幀中）。
+        
+        Args:
+            obj_id_a: 第一個物件 ID
+            obj_id_b: 第二個物件 ID
+        """
+        swap_count = 0
+        temp_id = -9999  # 臨時 ID 避免衝突
+        
+        for frame_idx, frame_result in self.sam3_results.items():
+            for det in frame_result.detections:
+                if det.obj_id == obj_id_a:
+                    det.obj_id = temp_id
+                    swap_count += 1
+            
+            for det in frame_result.detections:
+                if det.obj_id == obj_id_b:
+                    det.obj_id = obj_id_a
+            
+            for det in frame_result.detections:
+                if det.obj_id == temp_id:
+                    det.obj_id = obj_id_b
+        
+        # 交換物件狀態
+        status_a = self.object_status.get(obj_id_a, "pending")
+        status_b = self.object_status.get(obj_id_b, "pending")
+        self.object_status[obj_id_a] = status_b
+        self.object_status[obj_id_b] = status_a
+        
+        logger.info(f"Swapped labels: Object {obj_id_a} ↔ Object {obj_id_b} ({swap_count} detections affected)")
+        
+        # 更新 UI
+        self._reanalyze_with_preserved_edits()
+        self.update_object_list()
+        self.update_analysis_display()
+        self.update_timeline()
+        self.display_frame(self.current_frame)
+        
+        self.statusBar().showMessage(
+            f"Swapped Object {obj_id_a} ↔ Object {obj_id_b}"
+        )
+    
+    def jump_to_object_first_frame(self, obj_id: int):
+        """跳轉到物件首次出現的幀。"""
+        first_frame = None
+        
+        for frame_idx in sorted(self.sam3_results.keys()):
+            frame_result = self.sam3_results[frame_idx]
+            for det in frame_result.detections:
+                if det.obj_id == obj_id:
+                    first_frame = frame_idx
+                    break
+            if first_frame is not None:
+                break
+        
+        if first_frame is not None:
+            self.seek_to_frame(first_frame)
+            self.statusBar().showMessage(f"Object {obj_id} first appears at frame {first_frame}")
+        else:
+            QMessageBox.information(self, "Info", f"Object {obj_id} not found in any frame")
+    
+    def _get_all_object_info(self) -> List[Tuple[int, float]]:
+        """
+        取得所有物件的資訊列表。
+        
+        Returns:
+            List of (obj_id, avg_score) tuples
+        """
+        objects = []
+        
+        if self.video_analysis and self.video_analysis.object_summaries:
+            for obj_id, summary in self.video_analysis.object_summaries.items():
+                objects.append((obj_id, summary.avg_score))
+        else:
+            # Fallback: 從結果中收集
+            obj_scores: Dict[int, List[float]] = {}
+            for frame_result in self.sam3_results.values():
+                for det in frame_result.detections:
+                    if det.obj_id not in obj_scores:
+                        obj_scores[det.obj_id] = []
+                    obj_scores[det.obj_id].append(det.score)
+            
+            for obj_id, scores in obj_scores.items():
+                avg_score = sum(scores) / len(scores) if scores else 0
+                objects.append((obj_id, avg_score))
+        
+        return sorted(objects, key=lambda x: x[1], reverse=True)
     
     # =========================================================================
     # 影像處理與顯示
@@ -2160,10 +2565,12 @@ class HILAAMainWindow(QMainWindow):
             "Human-in-the-Loop Active Annotation\n"
             "for Maritime Video using SAM3\n\n"
             "Author: Sonic\n"
-            "Maritime Robotics Lab, NYCU\n\n"
+            "Assistive Robotics Group, NYCU\n\n"
             "Key Innovation:\n"
             "Use SAM3 confidence scores to minimize\n"
-            "human annotation effort by 5-10x"
+            "human annotation effort by 5-10x\n\n"
+            "NEW: Object Management\n"
+            "Right-click objects to delete, merge, or swap labels"
         )
     
     # =========================================================================
@@ -2185,8 +2592,24 @@ class HILAAMainWindow(QMainWindow):
         elif key == Qt.Key.Key_End:
             if self.video_loader:
                 self.display_frame(self.video_loader.metadata.total_frames - 1)
+        elif key == Qt.Key.Key_Delete:
+            # 刪除選中的物件
+            self._delete_selected_object()
         else:
             super().keyPressEvent(event)
+    
+    def _delete_selected_object(self):
+        """刪除選中的物件（快捷鍵）。"""
+        selected_items = self.object_list.selectedItems()
+        if not selected_items:
+            return
+        
+        item = selected_items[0]
+        widget = self.object_list.itemWidget(item)
+        if widget:
+            obj_id = widget.property("obj_id")
+            if obj_id is not None:
+                self.delete_object(obj_id)
     
     def resizeEvent(self, event):
         """視窗大小改變。"""
@@ -2469,8 +2892,6 @@ class HILAAMainWindow(QMainWindow):
     
     def _add_new_object(self, mask: np.ndarray):
         """新增一個新的物件到結果中。"""
-        from core.sam3_engine import Detection, FrameResult
-        
         # 計算新的 obj_id（找到最大的現有 ID + 1）
         max_obj_id = -1
         for frame_result in self.sam3_results.values():
@@ -2556,8 +2977,6 @@ class HILAAMainWindow(QMainWindow):
     
     def _propagate_to_following_frames(self, mask: np.ndarray, points: np.ndarray, labels: np.ndarray):
         """使用 SAM3 Video Predictor 傳播到後續幀。"""
-        from core.sam3_engine import Detection, FrameResult
-        
         state = self.video_canvas.refinement_state
         start_frame = self.current_frame
         
@@ -2663,8 +3082,6 @@ class HILAAMainWindow(QMainWindow):
     
     def _simple_propagate(self, obj_id: int, mask: np.ndarray, start_frame: int, progress: Optional[QProgressDialog]):
         """簡易傳播：將 mask 複製到後續所有幀（不追蹤）。"""
-        from core.sam3_engine import Detection, FrameResult
-        
         total_frames = self.video_loader.metadata.total_frames
         
         for i, frame_idx in enumerate(range(start_frame, total_frames)):
@@ -2680,8 +3097,6 @@ class HILAAMainWindow(QMainWindow):
     
     def _update_or_add_detection(self, frame_idx: int, obj_id: int, mask: np.ndarray):
         """更新或新增特定幀的 detection。"""
-        from core.sam3_engine import Detection, FrameResult
-        
         # 計算 bounding box
         ys, xs = np.where(mask)
         if len(xs) == 0 or len(ys) == 0:
