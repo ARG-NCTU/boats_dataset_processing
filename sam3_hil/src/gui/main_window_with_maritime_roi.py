@@ -2651,8 +2651,11 @@ class HILAAMainWindow(QMainWindow):
         if obj_id is None:
             return
         
+        # 記住當前幀位置
+        target_frame = self.current_frame
+        
         # 取得該物件在當前幀的 mask
-        frame_result = self.sam3_results.get(self.current_frame)
+        frame_result = self.sam3_results.get(target_frame)
         if not frame_result:
             QMessageBox.warning(self, "Warning", "No detection result for current frame")
             return
@@ -2668,6 +2671,9 @@ class HILAAMainWindow(QMainWindow):
             QMessageBox.warning(self, "Warning", f"Object {obj_id} not found in current frame")
             return
         
+        # 停止播放（先停止，避免播放時改變 current_frame）
+        self.stop_play()
+        
         # 進入 refinement 模式
         self.refinement_active = True
         self.refinement_obj_id = obj_id
@@ -2675,7 +2681,7 @@ class HILAAMainWindow(QMainWindow):
         # 設置 canvas 為 refinement 模式
         self.video_canvas.enter_refinement_mode(
             obj_id=obj_id,
-            frame_idx=self.current_frame,
+            frame_idx=target_frame,
             mask=target_det.mask
         )
         
@@ -2683,14 +2689,14 @@ class HILAAMainWindow(QMainWindow):
         score = target_det.score
         self.refinement_panel.enter_refinement(obj_id, score)
         
-        # 停止播放
-        self.stop_play()
-        
         # 禁用其他控制
         self._set_controls_enabled(False)
         
-        self.statusBar().showMessage(f"Refinement Mode: Object {obj_id} - Left click to include, Right click to exclude")
-        logger.info(f"Started refinement for object {obj_id}")
+        # 重新顯示當前幀（確保 canvas 顯示正確的幀）
+        self.display_frame(target_frame)
+        
+        self.statusBar().showMessage(f"Refinement Mode: Object {obj_id} at Frame {target_frame} - Left click to include, Right click to exclude")
+        logger.info(f"Started refinement for object {obj_id} at frame {target_frame}")
     
     def start_add_object(self):
         """開始手動新增物件模式。"""
@@ -2698,13 +2704,19 @@ class HILAAMainWindow(QMainWindow):
             QMessageBox.warning(self, "Warning", "Please open a video first")
             return
         
+        # 記住當前幀位置
+        target_frame = self.current_frame
+        
         # 取得當前幀圖像大小
-        frame = self.video_loader.get_frame(self.current_frame)
+        frame = self.video_loader.get_frame(target_frame)
         if frame is None:
             QMessageBox.warning(self, "Warning", "Cannot get current frame")
             return
         
         h, w = frame.shape[:2]
+        
+        # 停止播放（先停止，避免播放時改變 current_frame）
+        self.stop_play()
         
         # 進入 add object 模式
         self.refinement_active = True
@@ -2713,21 +2725,21 @@ class HILAAMainWindow(QMainWindow):
         
         # 設置 canvas 為 add object 模式
         self.video_canvas.enter_add_object_mode(
-            frame_idx=self.current_frame,
+            frame_idx=target_frame,
             image_shape=(h, w)
         )
         
         # 顯示控制面板（add object 模式）
         self.refinement_panel.enter_add_object()
         
-        # 停止播放
-        self.stop_play()
-        
         # 禁用其他控制
         self._set_controls_enabled(False)
         
-        self.statusBar().showMessage("Add Object Mode: Left click to include, Right click to exclude")
-        logger.info("Started add object mode")
+        # 重新顯示當前幀（關鍵！確保 canvas 顯示正確的幀）
+        self.display_frame(target_frame)
+        
+        self.statusBar().showMessage(f"Add Object Mode (Frame {target_frame}): Left click to include, Right click to exclude")
+        logger.info(f"Started add object mode at frame {target_frame}")
     
     def on_refinement_point_added(self, x: int, y: int, is_positive: bool):
         """處理 refinement 點擊。"""
