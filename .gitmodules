@@ -7,3 +7,6 @@
 [submodule "tools/Track-Anything"]
 	path = tools/Track-Anything
 	url = https://github.com/gaomingqi/Track-Anything.git
+[submodule "tools/cvat"]
+	path = tools/cvat
+	url = https://github.com/cvat-ai/cvat.git
