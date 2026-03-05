@@ -147,36 +147,71 @@ class SessionInfo:
 
 @dataclass
 class EfficiencyMetrics:
-    """效率指標"""
+    """
+    效率指標
     
-    # Human Intervention Rate
-    potential_hir: float = 0.0  # 需要審核的幀比例
-    actual_hir: float = 0.0     # 實際編輯的幀比例
-    edited_frames: int = 0
+    指標說明：
+    - HIR (Human Intervention Rate): 被編輯過的幀比例（unique frames）
+    - TEO (Total Edit Operations): 總編輯操作次數
+    - EPF (Edits Per Frame): 平均每幀編輯次數 = TEO / total_frames
+    - CPO (Clicks Per Object): 每個物件的平均點擊次數
+    - SPF (Seconds Per Frame): 每幀平均花費時間
+    """
+    
+    # Frame-based metrics
     total_frames: int = 0
+    edited_frame_count: int = 0      # 被編輯過的幀數（unique）
+    hir: float = 0.0                 # edited_frame_count / total_frames * 100
     
-    # Clicks Per Object
-    cpo: float = 0.0
+    # Operation-based metrics (NEW)
+    total_edit_operations: int = 0   # 總編輯操作次數
+    epf: float = 0.0                 # edits per frame = total_edit_operations / total_frames
+    
+    # Click metrics
+    cpo: float = 0.0                 # clicks per object
     total_clicks: int = 0
     total_objects: int = 0
     
-    # Seconds Per Frame
-    spf: float = 0.0
+    # Time metrics
+    spf: float = 0.0                 # seconds per frame
     total_seconds: float = 0.0
     
-    # 額外統計
+    # Detailed breakdown
     action_counts: Dict[str, int] = field(default_factory=dict)
+    frame_edit_counts: Dict[int, int] = field(default_factory=dict)  # frame_idx -> edit count
+    
+    # Legacy aliases (for backward compatibility)
+    @property
+    def actual_hir(self) -> float:
+        return self.hir
+    
+    @property
+    def edited_frames(self) -> int:
+        return self.edited_frame_count
     
     def to_dict(self) -> Dict[str, Any]:
-        return asdict(self)
+        d = asdict(self)
+        # 移除 frame_edit_counts 如果太大
+        if len(d.get("frame_edit_counts", {})) > 100:
+            d["frame_edit_counts"] = {"_truncated": True, "_count": len(d["frame_edit_counts"])}
+        return d
     
     def __str__(self) -> str:
+        # 找出編輯次數最多的幀
+        hotspots = ""
+        if self.frame_edit_counts:
+            sorted_frames = sorted(self.frame_edit_counts.items(), key=lambda x: x[1], reverse=True)[:5]
+            if sorted_frames:
+                hotspots = "\nEdit Hotspots: " + ", ".join([f"F{f}({c}x)" for f, c in sorted_frames])
+        
         return (
             f"=== Efficiency Metrics ===\n"
-            f"HIR (Actual): {self.actual_hir:.1f}% ({self.edited_frames}/{self.total_frames} frames)\n"
-            f"HIR (Potential): {self.potential_hir:.1f}%\n"
+            f"HIR: {self.hir:.1f}% ({self.edited_frame_count}/{self.total_frames} unique frames edited)\n"
+            f"TEO: {self.total_edit_operations} total edit operations\n"
+            f"EPF: {self.epf:.3f} edits/frame\n"
             f"CPO: {self.cpo:.2f} clicks/object ({self.total_clicks} clicks, {self.total_objects} objects)\n"
-            f"SPF: {self.spf:.2f} seconds/frame ({self.total_seconds:.1f}s total)\n"
+            f"SPF: {self.spf:.2f} seconds/frame ({self.total_seconds:.1f}s total)"
+            f"{hotspots}\n"
             f"Action Counts: {self.action_counts}"
         )
 
@@ -235,7 +270,8 @@ class ActionLogger:
         
         # 用於指標計算的快取
         self._clicked_objects: Set[int] = set()
-        self._edited_frames: Set[int] = set()
+        self._frame_edit_counts: Dict[int, int] = {}  # frame_idx -> edit_count
+        self._total_edit_operations: int = 0
         
         logger.info(f"ActionLogger initialized: dir={output_dir}, format={format}")
     
@@ -281,7 +317,8 @@ class ActionLogger:
         # 重設快取
         self.actions = []
         self._clicked_objects = set()
-        self._edited_frames = set()
+        self._frame_edit_counts = {}
+        self._total_edit_operations = 0
         
         # 開啟輸出檔案
         self._open_output_file()
@@ -427,9 +464,18 @@ class ActionLogger:
             obj_id=obj_id,
         ))
     
+    def _record_frame_edit(self, frame_idx: int):
+        """記錄幀編輯（內部 helper）"""
+        self._frame_edit_counts[frame_idx] = self._frame_edit_counts.get(frame_idx, 0) + 1
+    
+    def _record_edit_operation(self):
+        """記錄一次編輯操作（內部 helper）"""
+        self._total_edit_operations += 1
+    
     def log_apply_refine(self, frame_idx: int, obj_id: int):
         """記錄套用修正"""
-        self._edited_frames.add(frame_idx)
+        self._record_frame_edit(frame_idx)
+        self._record_edit_operation()
         
         self._log_action(ActionRecord(
             action_type=ActionType.APPLY_REFINE.value,
@@ -445,9 +491,11 @@ class ActionLogger:
         obj_id: int,
     ):
         """記錄傳播操作"""
-        # 傳播影響的所有幀都算編輯
+        # 傳播影響的所有幀都記錄編輯
         for f in range(start_frame, end_frame + 1):
-            self._edited_frames.add(f)
+            self._record_frame_edit(f)
+        # 但只算 1 次編輯操作
+        self._record_edit_operation()
         
         self._log_action(ActionRecord(
             action_type=ActionType.PROPAGATE.value,
@@ -460,7 +508,8 @@ class ActionLogger:
     
     def log_add_object(self, frame_idx: int, obj_id: int):
         """記錄新增物件"""
-        self._edited_frames.add(frame_idx)
+        self._record_frame_edit(frame_idx)
+        self._record_edit_operation()
         self._clicked_objects.add(obj_id)
         
         self._log_action(ActionRecord(
@@ -477,7 +526,8 @@ class ActionLogger:
         delete_type: str = "all",  # "all" or "from_current"
     ):
         """記錄刪除物件"""
-        self._edited_frames.add(frame_idx)
+        self._record_frame_edit(frame_idx)
+        self._record_edit_operation()
         
         self._log_action(ActionRecord(
             action_type=ActionType.DELETE_OBJECT.value,
@@ -494,7 +544,8 @@ class ActionLogger:
         target_obj_id: int,
     ):
         """記錄合併物件"""
-        self._edited_frames.add(frame_idx)
+        self._record_frame_edit(frame_idx)
+        self._record_edit_operation()
         
         self._log_action(ActionRecord(
             action_type=ActionType.MERGE_OBJECTS.value,
@@ -511,7 +562,8 @@ class ActionLogger:
         obj_b: int,
     ):
         """記錄交換標籤"""
-        self._edited_frames.add(frame_idx)
+        self._record_frame_edit(frame_idx)
+        self._record_edit_operation()
         
         self._log_action(ActionRecord(
             action_type=ActionType.SWAP_LABELS.value,
@@ -576,9 +628,12 @@ class ActionLogger:
             if action_type in [ActionType.POSITIVE_CLICK.value, ActionType.NEGATIVE_CLICK.value]:
                 total_clicks += 1
         
-        # 計算 HIR
-        edited_frames = len(self._edited_frames)
-        actual_hir = (edited_frames / total_frames * 100) if total_frames > 0 else 0
+        # 計算 HIR (unique edited frames)
+        edited_frame_count = len(self._frame_edit_counts)
+        hir = (edited_frame_count / total_frames * 100) if total_frames > 0 else 0
+        
+        # 計算 EPF (edits per frame)
+        epf = (self._total_edit_operations / total_frames) if total_frames > 0 else 0
         
         # 計算 CPO
         total_objects = len(self._clicked_objects)
@@ -592,15 +647,18 @@ class ActionLogger:
         spf = (total_seconds / total_frames) if total_frames > 0 else 0
         
         return EfficiencyMetrics(
-            actual_hir=actual_hir,
-            edited_frames=edited_frames,
             total_frames=total_frames,
+            edited_frame_count=edited_frame_count,
+            hir=hir,
+            total_edit_operations=self._total_edit_operations,
+            epf=epf,
             cpo=cpo,
             total_clicks=total_clicks,
             total_objects=total_objects,
             spf=spf,
             total_seconds=total_seconds,
             action_counts=action_counts,
+            frame_edit_counts=self._frame_edit_counts.copy(),
         )
     
     # =========================================================================
@@ -781,7 +839,8 @@ class SessionAnalyzer:
         # 統計
         action_counts: Dict[str, int] = {}
         clicked_objects: Set[int] = set()
-        edited_frames: Set[int] = set()
+        frame_edit_counts: Dict[int, int] = {}  # frame_idx -> edit count
+        total_edit_operations = 0
         total_clicks = 0
         
         session_start_time: Optional[float] = None
@@ -803,24 +862,27 @@ class SessionAnalyzer:
                 if action.obj_id is not None:
                     clicked_objects.add(action.obj_id)
             
-            # 編輯幀統計
+            # 編輯操作統計
             if action_type in [a.value for a in EDIT_ACTIONS]:
-                if action.frame_idx is not None:
-                    edited_frames.add(action.frame_idx)
+                total_edit_operations += 1
                 
-                # Propagate 影響多幀
+                if action.frame_idx is not None:
+                    frame_edit_counts[action.frame_idx] = frame_edit_counts.get(action.frame_idx, 0) + 1
+                
+                # Propagate 影響多幀（每幀都記錄編輯）
                 if action_type == ActionType.PROPAGATE.value:
                     if action.start_frame is not None and action.end_frame is not None:
                         for f in range(action.start_frame, action.end_frame + 1):
-                            edited_frames.add(f)
+                            frame_edit_counts[f] = frame_edit_counts.get(f, 0) + 1
             
             # Add object 也要記錄物件
             if action_type == ActionType.ADD_OBJECT.value and action.obj_id is not None:
                 clicked_objects.add(action.obj_id)
         
         # 計算指標
-        edited_frame_count = len(edited_frames)
-        actual_hir = (edited_frame_count / total_frames * 100) if total_frames > 0 else 0
+        edited_frame_count = len(frame_edit_counts)
+        hir = (edited_frame_count / total_frames * 100) if total_frames > 0 else 0
+        epf = (total_edit_operations / total_frames) if total_frames > 0 else 0
         
         total_objects = len(clicked_objects)
         cpo = (total_clicks / total_objects) if total_objects > 0 else 0
@@ -832,15 +894,18 @@ class SessionAnalyzer:
         spf = (total_seconds / total_frames) if total_frames > 0 else 0
         
         return EfficiencyMetrics(
-            actual_hir=actual_hir,
-            edited_frames=edited_frame_count,
             total_frames=total_frames,
+            edited_frame_count=edited_frame_count,
+            hir=hir,
+            total_edit_operations=total_edit_operations,
+            epf=epf,
             cpo=cpo,
             total_clicks=total_clicks,
             total_objects=total_objects,
             spf=spf,
             total_seconds=total_seconds,
             action_counts=action_counts,
+            frame_edit_counts=frame_edit_counts,
         )
     
     def analyze_file(self, filepath: Union[str, Path]) -> EfficiencyMetrics:
@@ -880,27 +945,32 @@ class SessionAnalyzer:
             lines.extend([
                 f"Session: {session_id}",
                 "-" * 40,
-                f"  HIR (Actual): {metrics.actual_hir:.1f}%",
-                f"  CPO: {metrics.cpo:.2f}",
-                f"  SPF: {metrics.spf:.2f}s",
+                f"  HIR: {metrics.hir:.1f}% ({metrics.edited_frame_count}/{metrics.total_frames} frames)",
+                f"  TEO: {metrics.total_edit_operations} edit operations",
+                f"  EPF: {metrics.epf:.3f} edits/frame",
+                f"  CPO: {metrics.cpo:.2f} clicks/object",
+                f"  SPF: {metrics.spf:.2f} seconds/frame",
                 f"  Total Time: {metrics.total_seconds:.1f}s",
-                f"  Edited Frames: {metrics.edited_frames}/{metrics.total_frames}",
                 "",
             ])
         
         # 總結
         if results:
-            avg_hir = sum(m.actual_hir for m in results.values()) / len(results)
+            avg_hir = sum(m.hir for m in results.values()) / len(results)
+            avg_teo = sum(m.total_edit_operations for m in results.values()) / len(results)
+            avg_epf = sum(m.epf for m in results.values()) / len(results)
             avg_cpo = sum(m.cpo for m in results.values()) / len(results)
             avg_spf = sum(m.spf for m in results.values()) / len(results)
             
             lines.extend([
                 "=" * 60,
-                "Summary",
+                "Summary (Averages)",
                 "=" * 60,
                 f"Average HIR: {avg_hir:.1f}%",
-                f"Average CPO: {avg_cpo:.2f}",
-                f"Average SPF: {avg_spf:.2f}s",
+                f"Average TEO: {avg_teo:.1f} operations",
+                f"Average EPF: {avg_epf:.3f} edits/frame",
+                f"Average CPO: {avg_cpo:.2f} clicks/object",
+                f"Average SPF: {avg_spf:.2f} seconds/frame",
             ])
         
         report = "\n".join(lines)
