@@ -19,6 +19,7 @@ Author: Adam (Assistive Robotics Lab, NYCU)
 
 import sys
 import logging
+import time
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Set
 
@@ -72,6 +73,7 @@ try:
     )
     from core.exporter import AnnotationExporter, ExportConfig, ExportStats
     from gui.interactive_canvas import InteractiveCanvas, RefinementControlPanel, RefinementState
+    from core.action_logger import ActionLogger, SessionAnalyzer, EfficiencyMetrics
 except ImportError as e:
     print(f"Import error: {e}")
     print("Make sure you're running from the correct directory")
@@ -864,6 +866,7 @@ class HILAAMainWindow(QMainWindow):
         self.horizon_result = None  # 儲存海平線偵測結果
         
         self.current_frame = 0
+        self._last_logged_frame = -1  # 用於追蹤幀跳轉 logging
         self.is_playing = False
         self.show_masks = True
         self.show_boxes = True
@@ -877,6 +880,14 @@ class HILAAMainWindow(QMainWindow):
         self.refinement_obj_id: Optional[int] = None
         self.add_object_mode = False  # True when adding new object instead of refining
         self.sam3_engine: Optional[SAM3Engine] = None  # Reuse for refinement
+        
+        # Action Logger (記錄使用者操作，計算 HIR/CPO/SPF)
+        self.action_logger = ActionLogger(
+            output_dir="./logs",
+            format="jsonl",
+            auto_flush=True
+        )
+        self._detection_start_time: Optional[float] = None  # 用於計算偵測時間
         
         # 設定 UI
         self.setup_ui()
@@ -1316,6 +1327,13 @@ class HILAAMainWindow(QMainWindow):
         if obj_id in self.object_status:
             del self.object_status[obj_id]
         
+        # === ActionLogger: 記錄刪除物件 ===
+        self.action_logger.log_delete_object(
+            frame_idx=self.current_frame,
+            obj_id=obj_id,
+            delete_type="all"
+        )
+        
         logger.info(f"Deleted object {obj_id}: removed {deleted_count} detections")
         
         # 更新 UI
@@ -1362,6 +1380,13 @@ class HILAAMainWindow(QMainWindow):
                     d for d in frame_result.detections if d.obj_id != obj_id
                 ]
                 deleted_count += original_count - len(frame_result.detections)
+        
+        # === ActionLogger: 記錄刪除物件（從當前幀開始）===
+        self.action_logger.log_delete_object(
+            frame_idx=from_frame,
+            obj_id=obj_id,
+            delete_type="from_current"
+        )
         
         logger.info(f"Deleted object {obj_id} from frame {from_frame}: removed {deleted_count} detections")
         
@@ -1443,6 +1468,13 @@ class HILAAMainWindow(QMainWindow):
         if source_obj_id in self.object_status:
             del self.object_status[source_obj_id]
         
+        # === ActionLogger: 記錄合併物件 ===
+        self.action_logger.log_merge_objects(
+            frame_idx=self.current_frame,
+            source_obj_id=source_obj_id,
+            target_obj_id=target_obj_id
+        )
+        
         logger.info(f"Merged object {source_obj_id} into {target_obj_id}: {merged_count} detections transferred")
         
         # 更新 UI
@@ -1514,6 +1546,13 @@ class HILAAMainWindow(QMainWindow):
         status_b = self.object_status.get(obj_id_b, "pending")
         self.object_status[obj_id_a] = status_b
         self.object_status[obj_id_b] = status_a
+        
+        # === ActionLogger: 記錄交換標籤 ===
+        self.action_logger.log_swap_labels(
+            frame_idx=self.current_frame,
+            obj_a=obj_id_a,
+            obj_b=obj_id_b
+        )
         
         logger.info(f"Swapped labels: Object {obj_id_a} ↔ Object {obj_id_b} ({swap_count} detections affected)")
         
@@ -1762,6 +1801,10 @@ class HILAAMainWindow(QMainWindow):
             return
         
         try:
+            # 結束之前的 session（如果有）
+            if self.action_logger.session is not None:
+                self.action_logger.end_session()
+            
             # 釋放之前的 loader
             if self.video_loader is not None:
                 self.video_loader.release()
@@ -1777,6 +1820,7 @@ class HILAAMainWindow(QMainWindow):
             
             # 更新 UI
             total = self.video_loader.metadata.total_frames
+            meta = self.video_loader.metadata
             self.timeline_slider.setMaximum(total - 1)
             self.timeline_slider.setValue(0)
             self.timeline_slider.setEnabled(True)
@@ -1786,6 +1830,16 @@ class HILAAMainWindow(QMainWindow):
             self.next_btn.setEnabled(True)
             self.detect_btn.setEnabled(True)
             self.add_object_btn.setEnabled(True)  # 開啟影片後就可以手動新增物件
+            
+            # === ActionLogger: 開始新 session ===
+            self.action_logger.start_session(
+                video_path=file_path,
+                total_frames=total,
+                width=meta.width,
+                height=meta.height,
+                fps=meta.fps,
+            )
+            self._last_logged_frame = 0
             
             # 顯示第一幀
             self.display_frame(0)
@@ -1853,7 +1907,13 @@ class HILAAMainWindow(QMainWindow):
         if self.video_loader is None:
             return
         
+        from_frame = self.current_frame
         frame_idx = max(0, min(frame_idx, self.video_loader.metadata.total_frames - 1))
+        
+        # === ActionLogger: 記錄幀跳轉（只記錄重要跳轉，避免播放時大量 log）===
+        if abs(frame_idx - from_frame) > 1:  # 只記錄跳躍超過 1 幀的情況
+            self.action_logger.log_frame_navigation(from_frame=from_frame, to_frame=frame_idx)
+        
         self.timeline_slider.setValue(frame_idx)
         self.display_frame(frame_idx)
     
@@ -1920,6 +1980,10 @@ class HILAAMainWindow(QMainWindow):
         video_path = str(self.video_loader.video_path)
         logger.info(f"Starting detection: video={video_path}, prompt={prompt}, mode={mode}")
         
+        # === ActionLogger: 記錄偵測開始 ===
+        self._detection_start_time = time.time()
+        self.action_logger.log_detection_started(prompt=prompt, frame_idx=0)
+        
         # 建立進度對話框
         self.progress_dialog = QProgressDialog(
             "Running SAM3 detection...", "Cancel", 0, 100, self
@@ -1955,6 +2019,18 @@ class HILAAMainWindow(QMainWindow):
         
         # 分析結果
         self.video_analysis = self.analyzer.analyze_video(self.sam3_results)
+        
+        # === ActionLogger: 記錄偵測完成 ===
+        if self._detection_start_time:
+            duration = time.time() - self._detection_start_time
+        else:
+            duration = 0.0
+        self.action_logger.log_detection_finished(
+            num_objects=self.video_analysis.unique_objects,
+            duration_seconds=duration,
+            num_frames=len(self.sam3_results)
+        )
+        self._detection_start_time = None
         
         # 運行 Jitter Detection
         self._run_jitter_detection()
@@ -2338,6 +2414,19 @@ class HILAAMainWindow(QMainWindow):
     def on_object_status_changed(self, obj_id: int, status: str):
         """物件狀態改變。"""
         self.object_status[obj_id] = status
+        
+        # === ActionLogger: 記錄審核操作 ===
+        if status == "accepted":
+            self.action_logger.log_approve_object(
+                frame_idx=self.current_frame,
+                obj_id=obj_id
+            )
+        elif status == "rejected":
+            self.action_logger.log_reject_object(
+                frame_idx=self.current_frame,
+                obj_id=obj_id
+            )
+        
         self.display_frame(self.current_frame)  # 重新顯示以更新視覺化
     
     def accept_all_high(self):
@@ -2525,6 +2614,14 @@ class HILAAMainWindow(QMainWindow):
             
             progress.close()
             
+            # === ActionLogger: 記錄匯出操作 ===
+            self.action_logger.log_export(
+                format=", ".join(stats.formats_exported),
+                output_path=str(stats.output_dir),
+                num_frames=stats.total_frames,
+                num_objects=self.video_analysis.unique_objects if self.video_analysis else 0
+            )
+            
             # 顯示結果
             interval_info = f"(every {frame_step} frames)" if frame_step > 1 else "(all frames)"
             labels_str = ", ".join(labels)
@@ -2620,6 +2717,25 @@ class HILAAMainWindow(QMainWindow):
     def closeEvent(self, event):
         """視窗關閉。"""
         self.stop_play()
+        
+        # === ActionLogger: 結束 session 並顯示效率指標 ===
+        if self.action_logger.session is not None:
+            metrics = self.action_logger.end_session()
+            if metrics and metrics.total_frames > 0:
+                # 顯示效率指標摘要
+                msg = (
+                    f"Session Complete!\n\n"
+                    f"=== Efficiency Metrics ===\n"
+                    f"HIR (Actual): {metrics.actual_hir:.1f}% "
+                    f"({metrics.edited_frames}/{metrics.total_frames} frames)\n"
+                    f"CPO: {metrics.cpo:.2f} clicks/object "
+                    f"({metrics.total_clicks} clicks, {metrics.total_objects} objects)\n"
+                    f"SPF: {metrics.spf:.2f} seconds/frame "
+                    f"({metrics.total_seconds:.1f}s total)\n\n"
+                    f"Log saved to: ./logs/"
+                )
+                QMessageBox.information(self, "Session Summary", msg)
+        
         if self.video_loader:
             self.video_loader.release()
         event.accept()
@@ -2746,6 +2862,15 @@ class HILAAMainWindow(QMainWindow):
         if not self.refinement_active:
             return
         
+        # === ActionLogger: 記錄點擊 ===
+        self.action_logger.log_click(
+            frame_idx=self.current_frame,
+            x=x,
+            y=y,
+            positive=is_positive,
+            obj_id=self.refinement_obj_id  # 可能是 None（add object mode）
+        )
+        
         # 更新點數顯示
         if self.video_canvas.refinement_state:
             point_count = len(self.video_canvas.refinement_state.points)
@@ -2855,7 +2980,14 @@ class HILAAMainWindow(QMainWindow):
         
         if self.add_object_mode:
             # === Add New Object Mode ===
-            self._add_new_object(new_mask)
+            new_obj_id = self._add_new_object(new_mask)
+            
+            # === ActionLogger: 記錄新增物件 ===
+            if new_obj_id is not None:
+                self.action_logger.log_add_object(
+                    frame_idx=edited_frame,
+                    obj_id=new_obj_id
+                )
         else:
             # === Refinement Mode ===
             obj_id = state.object_id
@@ -2868,6 +3000,12 @@ class HILAAMainWindow(QMainWindow):
                         det.mask = new_mask.astype(np.uint8)
                         logger.info(f"Applied refined mask for object {obj_id}")
                         break
+            
+            # === ActionLogger: 記錄套用修正 ===
+            self.action_logger.log_apply_refine(
+                frame_idx=edited_frame,
+                obj_id=obj_id
+            )
             
             self.statusBar().showMessage(f"Refinement applied for object {obj_id}")
         
@@ -2902,8 +3040,13 @@ class HILAAMainWindow(QMainWindow):
         else:
             logger.warning(f"Cannot track intervention at frame {frame_idx}: video_analysis is None")
     
-    def _add_new_object(self, mask: np.ndarray):
-        """新增一個新的物件到結果中。"""
+    def _add_new_object(self, mask: np.ndarray) -> Optional[int]:
+        """
+        新增一個新的物件到結果中。
+        
+        Returns:
+            new_obj_id: 新建立的物件 ID，如果失敗則返回 None
+        """
         # 計算新的 obj_id（找到最大的現有 ID + 1）
         max_obj_id = -1
         for frame_result in self.sam3_results.values():
@@ -2915,7 +3058,7 @@ class HILAAMainWindow(QMainWindow):
         ys, xs = np.where(mask)
         if len(xs) == 0 or len(ys) == 0:
             QMessageBox.warning(self, "Warning", "Empty mask, cannot add object.")
-            return
+            return None
         
         x_min, x_max = xs.min(), xs.max()
         y_min, y_max = ys.min(), ys.max()
@@ -2943,6 +3086,8 @@ class HILAAMainWindow(QMainWindow):
         
         logger.info(f"Added new object {new_obj_id} at frame {self.current_frame}")
         self.statusBar().showMessage(f"Added new object {new_obj_id}")
+        
+        return new_obj_id
         
         # 注意：不在這裡調用 analyze_video 和 UI 更新
         # 由調用者 on_refinement_apply 負責（避免順序問題）
@@ -3050,6 +3195,17 @@ class HILAAMainWindow(QMainWindow):
             # 更新 object status
             if self.add_object_mode:
                 self.object_status[obj_id] = "accepted"
+            
+            # === ActionLogger: 記錄傳播操作 ===
+            end_frame = total_frames - 1
+            if self.add_object_mode:
+                # 新增物件 + 傳播
+                self.action_logger.log_add_object(frame_idx=start_frame, obj_id=obj_id)
+            self.action_logger.log_propagate(
+                start_frame=start_frame,
+                end_frame=end_frame,
+                obj_id=obj_id
+            )
             
             # ====== 關鍵修復：正確的順序 ======
             # 1. 重新分析（保留已編輯的幀）
