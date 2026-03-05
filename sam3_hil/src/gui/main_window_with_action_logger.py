@@ -20,6 +20,8 @@ Author: Adam (Assistive Robotics Lab, NYCU)
 import sys
 import logging
 import time
+import tempfile
+import threading
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Set
 
@@ -119,54 +121,172 @@ class SAM3Worker(QThread):
     - 如果在主執行緒執行，GUI 會凍結
     - 使用 QThread 讓 GUI 保持響應
     
+    工作流程：
+    1. 載入 SAM3 模型
+    2. 啟動 video session
+    3. 添加 prompt 進行初步偵測
+    4. **暫停** - 發送 ready_to_propagate 信號，等待用戶確認
+    5. 用戶確認後，執行 propagate
+    
     信號 (Signals):
     - progress: 回報進度 (0-100)
+    - ready_to_propagate: 準備好 propagate，等待確認 (num_objects)
     - finished: 完成時發出結果
     - error: 發生錯誤時發出
+    - cancelled: 取消時發出
     """
-    progress = pyqtSignal(int, str)  # (百分比, 訊息)
-    finished = pyqtSignal(dict)       # 結果字典
-    error = pyqtSignal(str)           # 錯誤訊息
+    progress = pyqtSignal(int, str)           # (百分比, 訊息)
+    ready_to_propagate = pyqtSignal(int)      # (偵測到的物件數量)
+    finished = pyqtSignal(dict)               # 結果字典
+    error = pyqtSignal(str)                   # 錯誤訊息
+    cancelled = pyqtSignal()                  # 取消信號
     
     def __init__(self, video_path: str, prompt: str, mode: str = "gpu"):
         super().__init__()
         self.video_path = str(video_path)  # 確保是字串
         self.prompt = prompt
         self.mode = mode
+        self._cancelled = False
+        self._continue_event = threading.Event()
+        self._engine = None
+        self._session_id = None
+    
+    def cancel(self):
+        """請求取消處理"""
+        logger.info("SAM3Worker: Cancel requested")
+        self._cancelled = True
+        self._continue_event.set()  # 解除等待狀態
+    
+    def continue_propagation(self):
+        """用戶確認後，繼續執行 propagate"""
+        logger.info("SAM3Worker: User confirmed, continuing propagation")
+        self._continue_event.set()
+    
+    def _check_cancelled(self) -> bool:
+        """檢查是否被取消，如果是則清理資源"""
+        if self._cancelled:
+            logger.info("SAM3Worker: Cancellation detected, cleaning up...")
+            self._cleanup()
+            return True
+        return False
+    
+    def _cleanup(self):
+        """清理資源"""
+        try:
+            if self._session_id and self._engine:
+                logger.info(f"SAM3Worker: Closing session {self._session_id}")
+                self._engine.close_session(self._session_id)
+                self._session_id = None
+            if self._engine:
+                logger.info("SAM3Worker: Shutting down engine")
+                self._engine.shutdown()
+                self._engine = None
+        except Exception as e:
+            logger.warning(f"SAM3Worker: Cleanup error (ignored): {e}")
+        
+        # 清理 GPU 記憶體
+        try:
+            clear_gpu_memory()
+        except:
+            pass
     
     def run(self):
         """執行緒主函數。"""
-        engine = None
-        session_id = None
-        
         try:
+            # 檢查取消
+            if self._check_cancelled():
+                self.cancelled.emit()
+                return
+            
             # 清理 GPU 記憶體
             self.progress.emit(5, "Clearing GPU memory...")
             clear_gpu_memory()
 
+            # 檢查取消
+            if self._check_cancelled():
+                self.cancelled.emit()
+                return
+
             self.progress.emit(10, "Loading SAM3 model...")
             logger.info(f"Worker starting: video={self.video_path}, prompt={self.prompt}, mode={self.mode}")
             
-            engine = SAM3Engine(mode=self.mode)
+            self._engine = SAM3Engine(mode=self.mode)
+            
+            # 檢查取消
+            if self._check_cancelled():
+                self.cancelled.emit()
+                return
             
             self.progress.emit(30, "Starting video session...")
-            session_id = engine.start_video_session(self.video_path)
-            logger.info(f"Session started: {session_id}")
+            self._session_id = self._engine.start_video_session(self.video_path)
+            logger.info(f"Session started: {self._session_id}")
+            
+            # 檢查取消
+            if self._check_cancelled():
+                self.cancelled.emit()
+                return
             
             self.progress.emit(40, f"Detecting objects (prompt: {self.prompt})...")
-            engine.add_prompt(session_id, 0, self.prompt)
-            logger.info("Prompt added")
+            try:
+                result = self._engine.add_prompt(self._session_id, 0, self.prompt)
+                # add_prompt 可能返回不同格式，嘗試解析
+                if isinstance(result, tuple) and len(result) >= 2:
+                    obj_ids = result[1]
+                    num_objects = len(obj_ids) if obj_ids is not None else 0
+                else:
+                    num_objects = 0  # 無法確定，設為 0
+            except Exception as e:
+                logger.warning(f"Could not get object count from add_prompt: {e}")
+                num_objects = 0
+            logger.info(f"Initial detection: {num_objects} objects found")
             
-            self.progress.emit(50, "Propagating masks...")
-            results = engine.propagate(session_id)
+            # 檢查取消
+            if self._check_cancelled():
+                self.cancelled.emit()
+                return
+            
+            # ================================================================
+            # 暫停點：等待用戶確認
+            # ================================================================
+            self.progress.emit(45, f"Found {num_objects} objects. Waiting for confirmation...")
+            self.ready_to_propagate.emit(num_objects)
+            
+            # 等待用戶確認或取消
+            logger.info("SAM3Worker: Waiting for user confirmation...")
+            self._continue_event.wait()  # 阻塞直到 set()
+            
+            # 檢查是取消還是確認
+            if self._cancelled:
+                logger.info("SAM3Worker: User cancelled after detection")
+                self._cleanup()
+                self.cancelled.emit()
+                return
+            
+            # ================================================================
+            # 用戶確認，繼續 propagate
+            # ================================================================
+            # 注意：propagate() 是一個長時間操作，無法在中間中斷
+            # 取消請求會在 propagate 完成後立即生效
+            self.progress.emit(50, "Propagating masks (this may take a while)...")
+            results = self._engine.propagate(self._session_id)
             logger.info(f"Propagation done: {len(results)} frames")
             
-            self.progress.emit(90, "Closing session...")
-            engine.close_session(session_id)
-            session_id = None
+            # 檢查取消（在處理完成後）
+            if self._check_cancelled():
+                self.cancelled.emit()
+                return
             
-            engine.shutdown()
-            engine = None
+            self.progress.emit(90, "Closing session...")
+            self._engine.close_session(self._session_id)
+            self._session_id = None
+            
+            self._engine.shutdown()
+            self._engine = None
+            
+            # 最後再檢查一次取消
+            if self._cancelled:
+                self.cancelled.emit()
+                return
             
             self.progress.emit(100, "Done!")
             self.finished.emit({"results": results})
@@ -177,15 +297,13 @@ class SAM3Worker(QThread):
             logger.error(f"Worker error: {error_msg}")
             
             # 清理資源
-            try:
-                if session_id and engine:
-                    engine.close_session(session_id)
-                if engine:
-                    engine.shutdown()
-            except:
-                pass
+            self._cleanup()
             
-            self.error.emit(error_msg)
+            # 如果是取消導致的錯誤，發送取消信號而不是錯誤
+            if self._cancelled:
+                self.cancelled.emit()
+            else:
+                self.error.emit(error_msg)
 
 
 # =============================================================================
@@ -882,12 +1000,17 @@ class HILAAMainWindow(QMainWindow):
         self.sam3_engine: Optional[SAM3Engine] = None  # Reuse for refinement
         
         # Action Logger (記錄使用者操作，計算 HIR/CPO/SPF)
+        # 預設使用臨時目錄，open_video 時會重新設定為影片所在目錄的 logs 子目錄
         self.action_logger = ActionLogger(
-            output_dir="./logs",
+            output_dir=tempfile.gettempdir(),
             format="jsonl",
             auto_flush=True
         )
         self._detection_start_time: Optional[float] = None  # 用於計算偵測時間
+        
+        # Detection worker 狀態
+        self.worker: Optional[SAM3Worker] = None
+        self.progress_dialog: Optional[QProgressDialog] = None
         
         # 設定 UI
         self.setup_ui()
@@ -1038,7 +1161,7 @@ class HILAAMainWindow(QMainWindow):
         prompt_layout = QHBoxLayout()
         prompt_layout.addWidget(QLabel("Prompt:"))
         from PyQt6.QtWidgets import QLineEdit
-        self.prompt_input = QLineEdit("boat")
+        self.prompt_input = QLineEdit("boat, ship")
         prompt_layout.addWidget(self.prompt_input)
         settings_layout.addLayout(prompt_layout)
         
@@ -1272,26 +1395,26 @@ class HILAAMainWindow(QMainWindow):
         menu = QMenu(self)
         
         # 刪除物件
-        delete_action = menu.addAction("Delete Object (All Frames)")
+        delete_action = menu.addAction("🗑️ Delete Object (All Frames)")
         delete_action.triggered.connect(lambda: self.delete_object(obj_id))
         
-        delete_from_action = menu.addAction("Delete From Current Frame")
+        delete_from_action = menu.addAction("🗑️ Delete From Current Frame")
         delete_from_action.triggered.connect(lambda: self.delete_object_from_frame(obj_id, self.current_frame))
         
         menu.addSeparator()
         
         # 合併物件
-        merge_action = menu.addAction("Merge Into Another Object...")
+        merge_action = menu.addAction("🔗 Merge Into Another Object...")
         merge_action.triggered.connect(lambda: self.show_merge_dialog(obj_id))
         
         # 交換標籤
-        swap_action = menu.addAction("Swap Label With...")
+        swap_action = menu.addAction("🔄 Swap Label With...")
         swap_action.triggered.connect(lambda: self.show_swap_dialog(obj_id))
         
         menu.addSeparator()
         
         # 跳轉到物件首次出現的幀
-        jump_action = menu.addAction("Jump to First Appearance")
+        jump_action = menu.addAction("📍 Jump to First Appearance")
         jump_action.triggered.connect(lambda: self.jump_to_object_first_frame(obj_id))
         
         # 顯示選單
@@ -1314,6 +1437,8 @@ class HILAAMainWindow(QMainWindow):
         if reply != QMessageBox.StandardButton.Yes:
             return
         
+        edited_frame = self.current_frame  # 記錄操作發生的幀
+        
         # 從所有幀中移除該物件
         deleted_count = 0
         for frame_idx, frame_result in self.sam3_results.items():
@@ -1329,15 +1454,16 @@ class HILAAMainWindow(QMainWindow):
         
         # === ActionLogger: 記錄刪除物件 ===
         self.action_logger.log_delete_object(
-            frame_idx=self.current_frame,
+            frame_idx=edited_frame,
             obj_id=obj_id,
             delete_type="all"
         )
         
         logger.info(f"Deleted object {obj_id}: removed {deleted_count} detections")
         
-        # 更新 UI
+        # 更新 UI（先 reanalyze，再 track）
         self._reanalyze_with_preserved_edits()
+        self._track_human_intervention(edited_frame)  # ← 添加這行！
         self.update_object_list()
         self.update_analysis_display()
         self.update_timeline()
@@ -1390,8 +1516,9 @@ class HILAAMainWindow(QMainWindow):
         
         logger.info(f"Deleted object {obj_id} from frame {from_frame}: removed {deleted_count} detections")
         
-        # 更新 UI
+        # 更新 UI（先 reanalyze，再 track）
         self._reanalyze_with_preserved_edits()
+        self._track_human_intervention(from_frame)  # ← 添加這行！
         self.update_object_list()
         self.update_analysis_display()
         self.update_timeline()
@@ -1440,7 +1567,26 @@ class HILAAMainWindow(QMainWindow):
             source_obj_id: 來源物件 ID（將被刪除）
             target_obj_id: 目標物件 ID（保留）
         """
+        # 先檢查當前幀是否兩者都有 mask
+        current_frame_result = self.sam3_results.get(self.current_frame)
+        if current_frame_result:
+            has_source = any(d.obj_id == source_obj_id for d in current_frame_result.detections)
+            has_target = any(d.obj_id == target_obj_id for d in current_frame_result.detections)
+            
+            if has_source and has_target:
+                # 警告用戶
+                reply = QMessageBox.warning(
+                    self, "Warning: Overlapping Objects",
+                    f"Both Object {source_obj_id} and Object {target_obj_id} exist in the current frame.\n\n"
+                    f"If you merge, Object {source_obj_id}'s mask will be REMOVED in frames where both exist.\n\n"
+                    f"Continue with merge?",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+                )
+                if reply != QMessageBox.StandardButton.Yes:
+                    return
+        
         merged_count = 0
+        discarded_count = 0  # 被丟棄的 mask 數量
         
         for frame_idx, frame_result in self.sam3_results.items():
             # 找到 source 和 target 的 detection
@@ -1463,30 +1609,39 @@ class HILAAMainWindow(QMainWindow):
                 else:
                     # 兩者都有，保留 target，移除 source
                     frame_result.detections.pop(source_idx)
+                    discarded_count += 1
         
         # 移除 source 物件狀態
         if source_obj_id in self.object_status:
             del self.object_status[source_obj_id]
         
+        edited_frame = self.current_frame  # 記錄操作發生的幀
+        
         # === ActionLogger: 記錄合併物件 ===
         self.action_logger.log_merge_objects(
-            frame_idx=self.current_frame,
+            frame_idx=edited_frame,
             source_obj_id=source_obj_id,
             target_obj_id=target_obj_id
         )
         
-        logger.info(f"Merged object {source_obj_id} into {target_obj_id}: {merged_count} detections transferred")
+        logger.info(f"Merged object {source_obj_id} into {target_obj_id}: "
+                   f"{merged_count} transferred, {discarded_count} discarded")
         
-        # 更新 UI
+        # 更新 UI（先 reanalyze，再 track）
         self._reanalyze_with_preserved_edits()
+        self._track_human_intervention(edited_frame)
         self.update_object_list()
         self.update_analysis_display()
         self.update_timeline()
         self.display_frame(self.current_frame)
         
-        self.statusBar().showMessage(
-            f"Merged Object {source_obj_id} into Object {target_obj_id} ({merged_count} detections transferred)"
-        )
+        # 顯示更詳細的訊息
+        msg = f"Merged Object {source_obj_id} into Object {target_obj_id}"
+        if discarded_count > 0:
+            msg += f" ({merged_count} transferred, {discarded_count} discarded due to overlap)"
+        else:
+            msg += f" ({merged_count} detections transferred)"
+        self.statusBar().showMessage(msg)
     
     def show_swap_dialog(self, obj_id_a: int):
         """
@@ -1547,17 +1702,20 @@ class HILAAMainWindow(QMainWindow):
         self.object_status[obj_id_a] = status_b
         self.object_status[obj_id_b] = status_a
         
+        edited_frame = self.current_frame  # 記錄操作發生的幀
+        
         # === ActionLogger: 記錄交換標籤 ===
         self.action_logger.log_swap_labels(
-            frame_idx=self.current_frame,
+            frame_idx=edited_frame,
             obj_a=obj_id_a,
             obj_b=obj_id_b
         )
         
         logger.info(f"Swapped labels: Object {obj_id_a} ↔ Object {obj_id_b} ({swap_count} detections affected)")
         
-        # 更新 UI
+        # 更新 UI（先 reanalyze，再 track）
         self._reanalyze_with_preserved_edits()
+        self._track_human_intervention(edited_frame)  # ← 添加這行！
         self.update_object_list()
         self.update_analysis_display()
         self.update_timeline()
@@ -1802,7 +1960,7 @@ class HILAAMainWindow(QMainWindow):
         
         try:
             # 結束之前的 session（如果有）
-            if self.action_logger.session is not None:
+            if self.action_logger is not None and self.action_logger.session is not None:
                 self.action_logger.end_session()
             
             # 釋放之前的 loader
@@ -1831,6 +1989,15 @@ class HILAAMainWindow(QMainWindow):
             self.detect_btn.setEnabled(True)
             self.add_object_btn.setEnabled(True)  # 開啟影片後就可以手動新增物件
             
+            # === ActionLogger: 創建/重新創建，使用影片所在目錄的 logs 子目錄 ===
+            video_dir = Path(file_path).parent
+            logs_dir = video_dir / "logs"
+            self.action_logger = ActionLogger(
+                output_dir=str(logs_dir),
+                format="jsonl",
+                auto_flush=True
+            )
+            
             # === ActionLogger: 開始新 session ===
             self.action_logger.start_session(
                 video_path=file_path,
@@ -1854,7 +2021,7 @@ class HILAAMainWindow(QMainWindow):
                 "Please run detection"
             )
             
-            self.statusBar().showMessage(f"Opened: {file_path}")
+            self.statusBar().showMessage(f"Opened: {file_path} | Logs: {logs_dir}")
             
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Cannot open video:\n{e}")
@@ -1991,24 +2158,135 @@ class HILAAMainWindow(QMainWindow):
         self.progress_dialog.setWindowTitle("Processing")
         self.progress_dialog.setWindowModality(Qt.WindowModality.WindowModal)
         self.progress_dialog.setMinimumDuration(0)
+        self.progress_dialog.setAutoClose(False)  # 不要自動關閉
+        self.progress_dialog.setAutoReset(False)  # 不要自動重設
         
         # 建立並啟動 worker 執行緒
         self.worker = SAM3Worker(video_path, prompt, mode)
         self.worker.progress.connect(self.on_detection_progress)
+        self.worker.ready_to_propagate.connect(self.on_ready_to_propagate)
         self.worker.finished.connect(self.on_detection_finished)
         self.worker.error.connect(self.on_detection_error)
+        self.worker.cancelled.connect(self.on_detection_cancelled)
+        
+        # 連接取消按鈕到 worker 的取消方法
+        self.progress_dialog.canceled.connect(self._on_cancel_detection)
         
         self.detect_btn.setEnabled(False)
         self.worker.start()
     
+    def _on_cancel_detection(self):
+        """處理取消偵測請求"""
+        logger.info("User requested detection cancellation")
+        if hasattr(self, 'worker') and self.worker is not None:
+            # 更新對話框顯示
+            self.progress_dialog.setLabelText("Cancelling... please wait...")
+            self.progress_dialog.setCancelButton(None)  # 隱藏取消按鈕，防止重複點擊
+            
+            # 請求取消
+            self.worker.cancel()
+    
+    def on_detection_cancelled(self):
+        """偵測被取消時的處理"""
+        logger.info("Detection cancelled successfully")
+        
+        # 清理
+        if hasattr(self, 'progress_dialog') and self.progress_dialog:
+            self.progress_dialog.close()
+            self.progress_dialog = None
+        
+        if hasattr(self, 'worker') and self.worker:
+            self.worker.wait(1000)  # 等待最多 1 秒
+            if self.worker.isRunning():
+                logger.warning("Worker still running after cancel, terminating...")
+                self.worker.terminate()
+                self.worker.wait(500)
+            self.worker = None
+        
+        self.detect_btn.setEnabled(True)
+        self._detection_start_time = None
+        
+        self.statusBar().showMessage("Detection cancelled")
+    
+    def on_ready_to_propagate(self, num_objects: int):
+        """
+        初步偵測完成，等待用戶確認是否繼續 propagate。
+        
+        這是一個關鍵暫停點，讓用戶可以在漫長的 propagate 開始前決定是否繼續。
+        """
+        logger.info(f"Ready to propagate: {num_objects} objects detected")
+        
+        # 暫時隱藏 progress dialog
+        if hasattr(self, 'progress_dialog') and self.progress_dialog:
+            self.progress_dialog.hide()
+        
+        # 準備確認訊息
+        if num_objects == 0:
+            msg = (
+                f"No objects detected with prompt: '{self.prompt_input.text()}'\n\n"
+                f"Do you want to continue anyway?\n"
+                f"(Propagation may still find objects in later frames)"
+            )
+        else:
+            total_frames = self.video_loader.metadata.total_frames
+            estimated_time = total_frames * 0.1  # 估算：每幀約 0.1 秒
+            
+            msg = (
+                f"✅ Initial Detection Complete!\n\n"
+                f"Objects found: {num_objects}\n"
+                f"Total frames: {total_frames}\n"
+                f"Estimated time: ~{estimated_time:.0f} seconds\n\n"
+                f"⚠️ Warning: Once propagation starts, it cannot be interrupted.\n\n"
+                f"Do you want to continue with propagation?"
+            )
+        
+        # 顯示確認對話框
+        reply = QMessageBox.question(
+            self, 
+            "Confirm Propagation",
+            msg,
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.Yes  # 預設選擇 Yes
+        )
+        
+        if reply == QMessageBox.StandardButton.Yes:
+            # 用戶確認，繼續 propagate
+            logger.info("User confirmed propagation")
+            
+            # 重新顯示 progress dialog
+            if hasattr(self, 'progress_dialog') and self.progress_dialog:
+                self.progress_dialog.show()
+                self.progress_dialog.setLabelText("Propagating masks (this may take a while)...")
+                self.progress_dialog.setValue(50)
+            
+            # 通知 worker 繼續
+            if hasattr(self, 'worker') and self.worker:
+                self.worker.continue_propagation()
+        else:
+            # 用戶取消
+            logger.info("User cancelled before propagation")
+            
+            # 通知 worker 取消
+            if hasattr(self, 'worker') and self.worker:
+                self.worker.cancel()
+    
     def on_detection_progress(self, percent: int, message: str):
         """偵測進度更新。"""
-        self.progress_dialog.setValue(percent)
-        self.progress_dialog.setLabelText(message)
+        if hasattr(self, 'progress_dialog') and self.progress_dialog:
+            self.progress_dialog.setValue(percent)
+            self.progress_dialog.setLabelText(message)
     
     def on_detection_finished(self, result: dict):
         """偵測完成。"""
-        self.progress_dialog.close()
+        # 清理對話框和 worker
+        if hasattr(self, 'progress_dialog') and self.progress_dialog:
+            self.progress_dialog.close()
+            self.progress_dialog = None
+        
+        if hasattr(self, 'worker') and self.worker:
+            self.worker.wait(500)
+            self.worker = None
+        
         self.detect_btn.setEnabled(True)
         
         self.sam3_results = result["results"]
@@ -2326,8 +2604,17 @@ class HILAAMainWindow(QMainWindow):
     
     def on_detection_error(self, error_msg: str):
         """偵測錯誤。"""
-        self.progress_dialog.close()
+        # 清理對話框和 worker
+        if hasattr(self, 'progress_dialog') and self.progress_dialog:
+            self.progress_dialog.close()
+            self.progress_dialog = None
+        
+        if hasattr(self, 'worker') and self.worker:
+            self.worker.wait(500)
+            self.worker = None
+        
         self.detect_btn.setEnabled(True)
+        self._detection_start_time = None
         
         # 顯示錯誤（如果太長就截斷）
         display_msg = error_msg
@@ -2718,23 +3005,41 @@ class HILAAMainWindow(QMainWindow):
         """視窗關閉。"""
         self.stop_play()
         
+        # 如果有正在運行的 worker，先取消它
+        if hasattr(self, 'worker') and self.worker and self.worker.isRunning():
+            logger.info("closeEvent: Cancelling running worker...")
+            self.worker.cancel()
+            self.worker.wait(2000)  # 等待最多 2 秒
+            if self.worker.isRunning():
+                logger.warning("closeEvent: Worker still running, terminating...")
+                self.worker.terminate()
+                self.worker.wait(500)
+            self.worker = None
+        
+        # 關閉 progress dialog（如果有）
+        if hasattr(self, 'progress_dialog') and self.progress_dialog:
+            self.progress_dialog.close()
+            self.progress_dialog = None
+        
         # === ActionLogger: 結束 session 並顯示效率指標 ===
-        if self.action_logger.session is not None:
+        if self.action_logger is not None and self.action_logger.session is not None:
+            logs_path = self.action_logger.output_dir
             metrics = self.action_logger.end_session()
             if metrics and metrics.total_frames > 0:
                 # 顯示效率指標摘要
                 msg = (
                     f"Session Complete!\n\n"
                     f"=== Efficiency Metrics ===\n"
-                    f"HIR: {metrics.hir:.1f}% "
-                    f"({metrics.edited_frame_count}/{metrics.total_frames} unique frames)\n"
-                    f"TEO: {metrics.total_edit_operations} edit operations\n"
-                    f"EPF: {metrics.epf:.3f} edits/frame\n"
+                    f"TEO: {metrics.total_edit_operations} edit operations "
+                    f"(primary workload metric)\n"
+                    f"EOR: {metrics.eor:.4f} edits/frame\n"
+                    f"FCR: {metrics.fcr:.1f}% "
+                    f"({metrics.edited_frame_count}/{metrics.total_frames} frames touched)\n"
                     f"CPO: {metrics.cpo:.2f} clicks/object "
                     f"({metrics.total_clicks} clicks, {metrics.total_objects} objects)\n"
                     f"SPF: {metrics.spf:.2f} seconds/frame "
                     f"({metrics.total_seconds:.1f}s total)\n\n"
-                    f"Log saved to: ./logs/"
+                    f"Log saved to: {logs_path}/"
                 )
                 QMessageBox.information(self, "Session Summary", msg)
         
