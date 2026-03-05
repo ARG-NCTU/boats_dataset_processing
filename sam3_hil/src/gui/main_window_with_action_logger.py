@@ -1304,7 +1304,7 @@ class HILAAMainWindow(QMainWindow):
         objects_layout.addWidget(self.object_list)
         
         # 物件管理提示
-        manage_hint = QLabel("💡 Right-click on object for more options")
+        manage_hint = QLabel("Right-click on object for more options")
         manage_hint.setStyleSheet("color: #888; font-size: 10px;")
         objects_layout.addWidget(manage_hint)
         
@@ -1395,26 +1395,26 @@ class HILAAMainWindow(QMainWindow):
         menu = QMenu(self)
         
         # 刪除物件
-        delete_action = menu.addAction("🗑️ Delete Object (All Frames)")
+        delete_action = menu.addAction("Delete Object (All Frames)")
         delete_action.triggered.connect(lambda: self.delete_object(obj_id))
         
-        delete_from_action = menu.addAction("🗑️ Delete From Current Frame")
+        delete_from_action = menu.addAction("Delete From Current Frame")
         delete_from_action.triggered.connect(lambda: self.delete_object_from_frame(obj_id, self.current_frame))
         
         menu.addSeparator()
         
         # 合併物件
-        merge_action = menu.addAction("🔗 Merge Into Another Object...")
+        merge_action = menu.addAction("Merge Into Another Object...")
         merge_action.triggered.connect(lambda: self.show_merge_dialog(obj_id))
         
         # 交換標籤
-        swap_action = menu.addAction("🔄 Swap Label With...")
+        swap_action = menu.addAction("Swap Label With...")
         swap_action.triggered.connect(lambda: self.show_swap_dialog(obj_id))
         
         menu.addSeparator()
         
         # 跳轉到物件首次出現的幀
-        jump_action = menu.addAction("📍 Jump to First Appearance")
+        jump_action = menu.addAction("Jump to First Appearance")
         jump_action.triggered.connect(lambda: self.jump_to_object_first_frame(obj_id))
         
         # 顯示選單
@@ -1463,7 +1463,7 @@ class HILAAMainWindow(QMainWindow):
         
         # 更新 UI（先 reanalyze，再 track）
         self._reanalyze_with_preserved_edits()
-        self._track_human_intervention(edited_frame)  # ← 添加這行！
+        self._track_human_intervention(edited_frame)  
         self.update_object_list()
         self.update_analysis_display()
         self.update_timeline()
