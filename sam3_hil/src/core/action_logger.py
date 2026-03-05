@@ -150,30 +150,32 @@ class EfficiencyMetrics:
     """
     效率指標
     
-    指標說明：
-    - HIR (Human Intervention Rate): 被編輯過的幀比例（unique frames）
-    - TEO (Total Edit Operations): 總編輯操作次數
-    - EPF (Edits Per Frame): 平均每幀編輯次數 = TEO / total_frames
+    核心指標（反映工作量）：
+    - TEO (Total Edit Operations): 總編輯操作次數 - 主要工作量指標
+    - EOR (Edit Operation Rate): 編輯操作率 = TEO / total_frames - 每幀平均編輯次數
+    
+    輔助指標：
+    - FCR (Frame Coverage Rate): 被編輯的幀比例（原 HIR）- 只是覆蓋率，不反映工作量
     - CPO (Clicks Per Object): 每個物件的平均點擊次數
     - SPF (Seconds Per Frame): 每幀平均花費時間
     """
     
-    # Frame-based metrics
+    # 主要工作量指標
+    total_edit_operations: int = 0   # TEO: 總編輯操作次數
+    eor: float = 0.0                 # EOR: edit operation rate = TEO / total_frames
+    
+    # 輔助指標
     total_frames: int = 0
     edited_frame_count: int = 0      # 被編輯過的幀數（unique）
-    hir: float = 0.0                 # edited_frame_count / total_frames * 100
-    
-    # Operation-based metrics (NEW)
-    total_edit_operations: int = 0   # 總編輯操作次數
-    epf: float = 0.0                 # edits per frame = total_edit_operations / total_frames
+    fcr: float = 0.0                 # FCR: frame coverage rate = edited_frame_count / total_frames
     
     # Click metrics
-    cpo: float = 0.0                 # clicks per object
+    cpo: float = 0.0                 # CPO: clicks per object
     total_clicks: int = 0
     total_objects: int = 0
     
     # Time metrics
-    spf: float = 0.0                 # seconds per frame
+    spf: float = 0.0                 # SPF: seconds per frame
     total_seconds: float = 0.0
     
     # Detailed breakdown
@@ -183,11 +185,23 @@ class EfficiencyMetrics:
     # Legacy aliases (for backward compatibility)
     @property
     def actual_hir(self) -> float:
-        return self.hir
+        """Deprecated: use fcr instead"""
+        return self.fcr
+    
+    @property
+    def hir(self) -> float:
+        """Deprecated: use fcr instead"""
+        return self.fcr
     
     @property
     def edited_frames(self) -> int:
+        """Deprecated: use edited_frame_count instead"""
         return self.edited_frame_count
+    
+    @property
+    def epf(self) -> float:
+        """Alias for eor (edits per frame = edit operation rate)"""
+        return self.eor
     
     def to_dict(self) -> Dict[str, Any]:
         d = asdict(self)
@@ -206,9 +220,9 @@ class EfficiencyMetrics:
         
         return (
             f"=== Efficiency Metrics ===\n"
-            f"HIR: {self.hir:.1f}% ({self.edited_frame_count}/{self.total_frames} unique frames edited)\n"
-            f"TEO: {self.total_edit_operations} total edit operations\n"
-            f"EPF: {self.epf:.3f} edits/frame\n"
+            f"TEO: {self.total_edit_operations} edit operations (primary workload metric)\n"
+            f"EOR: {self.eor:.4f} edits/frame\n"
+            f"FCR: {self.fcr:.1f}% ({self.edited_frame_count}/{self.total_frames} frames touched)\n"
             f"CPO: {self.cpo:.2f} clicks/object ({self.total_clicks} clicks, {self.total_objects} objects)\n"
             f"SPF: {self.spf:.2f} seconds/frame ({self.total_seconds:.1f}s total)"
             f"{hotspots}\n"
@@ -490,11 +504,15 @@ class ActionLogger:
         end_frame: int,
         obj_id: int,
     ):
-        """記錄傳播操作"""
-        # 傳播影響的所有幀都記錄編輯
-        for f in range(start_frame, end_frame + 1):
-            self._record_frame_edit(f)
-        # 但只算 1 次編輯操作
+        """
+        記錄傳播操作
+        
+        注意：HIR 只計算用戶「主動介入」的幀，propagate 只算起始幀。
+        被傳播影響的幀範圍記錄在 metadata 中供分析用。
+        """
+        # 只記錄起始幀為「被編輯」（用戶主動介入的幀）
+        self._record_frame_edit(start_frame)
+        # 算 1 次編輯操作
         self._record_edit_operation()
         
         self._log_action(ActionRecord(
@@ -504,6 +522,9 @@ class ActionLogger:
             obj_id=obj_id,
             start_frame=start_frame,
             end_frame=end_frame,
+            metadata={
+                "affected_frames": end_frame - start_frame + 1,  # 記錄影響了多少幀
+            }
         ))
     
     def log_add_object(self, frame_idx: int, obj_id: int):
@@ -628,12 +649,12 @@ class ActionLogger:
             if action_type in [ActionType.POSITIVE_CLICK.value, ActionType.NEGATIVE_CLICK.value]:
                 total_clicks += 1
         
-        # 計算 HIR (unique edited frames)
+        # 計算 FCR (Frame Coverage Rate) - 輔助指標
         edited_frame_count = len(self._frame_edit_counts)
-        hir = (edited_frame_count / total_frames * 100) if total_frames > 0 else 0
+        fcr = (edited_frame_count / total_frames * 100) if total_frames > 0 else 0
         
-        # 計算 EPF (edits per frame)
-        epf = (self._total_edit_operations / total_frames) if total_frames > 0 else 0
+        # 計算 EOR (Edit Operation Rate) - 主要工作量指標
+        eor = (self._total_edit_operations / total_frames) if total_frames > 0 else 0
         
         # 計算 CPO
         total_objects = len(self._clicked_objects)
@@ -647,11 +668,11 @@ class ActionLogger:
         spf = (total_seconds / total_frames) if total_frames > 0 else 0
         
         return EfficiencyMetrics(
+            total_edit_operations=self._total_edit_operations,
+            eor=eor,
             total_frames=total_frames,
             edited_frame_count=edited_frame_count,
-            hir=hir,
-            total_edit_operations=self._total_edit_operations,
-            epf=epf,
+            fcr=fcr,
             cpo=cpo,
             total_clicks=total_clicks,
             total_objects=total_objects,
@@ -866,14 +887,11 @@ class SessionAnalyzer:
             if action_type in [a.value for a in EDIT_ACTIONS]:
                 total_edit_operations += 1
                 
+                # 只記錄用戶主動操作的幀（propagate 只算起始幀）
                 if action.frame_idx is not None:
                     frame_edit_counts[action.frame_idx] = frame_edit_counts.get(action.frame_idx, 0) + 1
                 
-                # Propagate 影響多幀（每幀都記錄編輯）
-                if action_type == ActionType.PROPAGATE.value:
-                    if action.start_frame is not None and action.end_frame is not None:
-                        for f in range(action.start_frame, action.end_frame + 1):
-                            frame_edit_counts[f] = frame_edit_counts.get(f, 0) + 1
+                # 注意：propagate 的 affected_frames 記錄在 metadata 中，不影響 FCR
             
             # Add object 也要記錄物件
             if action_type == ActionType.ADD_OBJECT.value and action.obj_id is not None:
@@ -881,8 +899,8 @@ class SessionAnalyzer:
         
         # 計算指標
         edited_frame_count = len(frame_edit_counts)
-        hir = (edited_frame_count / total_frames * 100) if total_frames > 0 else 0
-        epf = (total_edit_operations / total_frames) if total_frames > 0 else 0
+        fcr = (edited_frame_count / total_frames * 100) if total_frames > 0 else 0
+        eor = (total_edit_operations / total_frames) if total_frames > 0 else 0
         
         total_objects = len(clicked_objects)
         cpo = (total_clicks / total_objects) if total_objects > 0 else 0
@@ -894,11 +912,11 @@ class SessionAnalyzer:
         spf = (total_seconds / total_frames) if total_frames > 0 else 0
         
         return EfficiencyMetrics(
+            total_edit_operations=total_edit_operations,
+            eor=eor,
             total_frames=total_frames,
             edited_frame_count=edited_frame_count,
-            hir=hir,
-            total_edit_operations=total_edit_operations,
-            epf=epf,
+            fcr=fcr,
             cpo=cpo,
             total_clicks=total_clicks,
             total_objects=total_objects,
@@ -945,9 +963,9 @@ class SessionAnalyzer:
             lines.extend([
                 f"Session: {session_id}",
                 "-" * 40,
-                f"  HIR: {metrics.hir:.1f}% ({metrics.edited_frame_count}/{metrics.total_frames} frames)",
-                f"  TEO: {metrics.total_edit_operations} edit operations",
-                f"  EPF: {metrics.epf:.3f} edits/frame",
+                f"  TEO: {metrics.total_edit_operations} edit operations (workload)",
+                f"  EOR: {metrics.eor:.4f} edits/frame",
+                f"  FCR: {metrics.fcr:.1f}% ({metrics.edited_frame_count}/{metrics.total_frames} frames touched)",
                 f"  CPO: {metrics.cpo:.2f} clicks/object",
                 f"  SPF: {metrics.spf:.2f} seconds/frame",
                 f"  Total Time: {metrics.total_seconds:.1f}s",
@@ -956,9 +974,9 @@ class SessionAnalyzer:
         
         # 總結
         if results:
-            avg_hir = sum(m.hir for m in results.values()) / len(results)
             avg_teo = sum(m.total_edit_operations for m in results.values()) / len(results)
-            avg_epf = sum(m.epf for m in results.values()) / len(results)
+            avg_eor = sum(m.eor for m in results.values()) / len(results)
+            avg_fcr = sum(m.fcr for m in results.values()) / len(results)
             avg_cpo = sum(m.cpo for m in results.values()) / len(results)
             avg_spf = sum(m.spf for m in results.values()) / len(results)
             
@@ -966,9 +984,9 @@ class SessionAnalyzer:
                 "=" * 60,
                 "Summary (Averages)",
                 "=" * 60,
-                f"Average HIR: {avg_hir:.1f}%",
                 f"Average TEO: {avg_teo:.1f} operations",
-                f"Average EPF: {avg_epf:.3f} edits/frame",
+                f"Average EOR: {avg_eor:.4f} edits/frame",
+                f"Average FCR: {avg_fcr:.1f}%",
                 f"Average CPO: {avg_cpo:.2f} clicks/object",
                 f"Average SPF: {avg_spf:.2f} seconds/frame",
             ])
