@@ -2726,8 +2726,10 @@ class HILAAMainWindow(QMainWindow):
                 msg = (
                     f"Session Complete!\n\n"
                     f"=== Efficiency Metrics ===\n"
-                    f"HIR (Actual): {metrics.actual_hir:.1f}% "
-                    f"({metrics.edited_frames}/{metrics.total_frames} frames)\n"
+                    f"HIR: {metrics.hir:.1f}% "
+                    f"({metrics.edited_frame_count}/{metrics.total_frames} unique frames)\n"
+                    f"TEO: {metrics.total_edit_operations} edit operations\n"
+                    f"EPF: {metrics.epf:.3f} edits/frame\n"
                     f"CPO: {metrics.cpo:.2f} clicks/object "
                     f"({metrics.total_clicks} clicks, {metrics.total_objects} objects)\n"
                     f"SPF: {metrics.spf:.2f} seconds/frame "
