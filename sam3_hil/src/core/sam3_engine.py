@@ -297,7 +297,7 @@ class SAM3GPUEngine(BaseSAM3Engine):
             if torch.is_tensor(box):
                 box = box.cpu().numpy()
             if torch.is_tensor(score):
-                score = float(score.cpu().numpy())
+                score = float(score.float().cpu().numpy())  # .float() converts bfloat16 to float32
             
             # Ensure mask is 2D
             if mask.ndim == 3:
