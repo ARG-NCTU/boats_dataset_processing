@@ -3224,6 +3224,18 @@ class HILAAMainWindow(QMainWindow):
             self.open_btn.setText("Open Folder")
             self.statusBar().showMessage("Mode: Independent Images - 點擊 Open Folder 選擇圖片資料夾")
 
+    def smart_open(self):
+        """根據當前模式智能開啟檔案或資料夾。"""
+        mode_index = self.processing_mode_combo.currentIndex()
+        
+        if mode_index == 0:
+            # Video mode - 開啟影片
+            self.open_video()
+        else:
+            # Sequential or Independent Images - 開啟資料夾
+            self.open_image_folder()
+
+
     def _on_maritime_roi_changed(self, state):
         """Maritime ROI checkbox 狀態改變。"""
         enabled = (state == Qt.CheckState.Checked.value)
