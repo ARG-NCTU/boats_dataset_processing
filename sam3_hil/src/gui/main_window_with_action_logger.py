@@ -3206,6 +3206,24 @@ class HILAAMainWindow(QMainWindow):
             self.update_analysis_display()
             self.display_frame(self.current_frame)
     
+    def _on_processing_mode_changed(self, index):
+        """Processing Mode 改變時的處理。"""
+        if index == 0:
+            # Video mode
+            logger.info("Processing mode: Video (連續影片，使用追蹤)")
+            self.open_btn.setText("Open Video")
+            self.statusBar().showMessage("Mode: Video - 點擊 Open Video 選擇影片檔案")
+        elif index == 1:
+            # Sequential Images mode
+            logger.info("Processing mode: Sequential Images (連續照片，使用追蹤)")
+            self.open_btn.setText("Open Folder")
+            self.statusBar().showMessage("Mode: Sequential Images - 點擊 Open Folder 選擇圖片資料夾")
+        else:
+            # Independent Images mode
+            logger.info("Processing mode: Independent Images (獨立照片，分別處理)")
+            self.open_btn.setText("Open Folder")
+            self.statusBar().showMessage("Mode: Independent Images - 點擊 Open Folder 選擇圖片資料夾")
+
     def _on_maritime_roi_changed(self, state):
         """Maritime ROI checkbox 狀態改變。"""
         enabled = (state == Qt.CheckState.Checked.value)
