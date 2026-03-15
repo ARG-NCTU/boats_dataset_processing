@@ -1228,7 +1228,7 @@ class HILAAMainWindow(QMainWindow):
         control_layout = QHBoxLayout()
         
         self.open_btn = QPushButton("Open Video")
-        self.open_btn.clicked.connect(self.open_video)
+        self.open_btn.clicked.connect(self.smart_open)  # 根據模式智能開啟
         control_layout.addWidget(self.open_btn)
         
         self.detect_btn = QPushButton("Run Detection")
