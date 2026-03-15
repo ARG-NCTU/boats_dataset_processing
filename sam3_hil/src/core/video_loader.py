@@ -1,30 +1,34 @@
 #!/usr/bin/env python3
 """
-Video Loader Module
-===================
+Video and Image Loader Module
+=============================
 
-Provides efficient video loading, frame extraction, and navigation
+Provides efficient video/image loading, frame extraction, and navigation
 for the HIL-AA Maritime Annotation System.
 
 Features:
-- Random access to any frame
+- VideoLoader: Video file handling with random access
+- ImageFolderLoader: Image folder handling with VideoLoader-compatible API
 - Frame range extraction
 - Thumbnail generation for timeline
 - LRU cache for frequently accessed frames
 - Metadata extraction
 
 Usage:
+    # Video
     loader = VideoLoader("/path/to/video.mp4")
     frame = loader.get_frame(100)
-    thumbnail = loader.get_thumbnail(100, size=(160, 90))
-    metadata = loader.get_metadata()
+    
+    # Image folder
+    loader = ImageFolderLoader("/path/to/images/")
+    frame = loader.get_frame(0)  # First image
 """
 
 import cv2
 import numpy as np
 from pathlib import Path
 from functools import lru_cache
-from typing import List, Tuple, Optional, Dict, Any
+from typing import List, Tuple, Optional, Dict, Any, Union
 from dataclasses import dataclass
 import logging
 
@@ -397,6 +401,262 @@ class VideoLoader:
 
 
 # =============================================================================
+# Image Folder Loader (for batch image processing)
+# =============================================================================
+
+@dataclass
+class ImageFolderMetadata:
+    """Image folder metadata container."""
+    path: str
+    folder_name: str
+    total_frames: int  # Number of images (using 'frames' for API compatibility)
+    image_paths: List[str]
+    width: int  # From first image
+    height: int  # From first image
+    fps: float = 1.0  # Dummy value for API compatibility
+    duration_seconds: float = 0.0  # Dummy value
+    
+    def __str__(self) -> str:
+        return (
+            f"{self.folder_name}: {self.total_frames} images, "
+            f"{self.width}x{self.height}"
+        )
+
+
+class ImageFolderLoader:
+    """
+    Load images from a folder with VideoLoader-compatible API.
+    
+    This allows the same GUI code to work with both videos and image folders.
+    Each image is treated as a "frame".
+    
+    Supported formats: .jpg, .jpeg, .png, .bmp, .tiff, .webp
+    
+    Usage:
+        loader = ImageFolderLoader("/path/to/images/")
+        frame = loader.get_frame(0)  # Get first image
+        metadata = loader.metadata
+    """
+    
+    SUPPORTED_FORMATS = {'.jpg', '.jpeg', '.png', '.bmp', '.tiff', '.tif', '.webp'}
+    
+    def __init__(self, folder_path: str, cache_size: int = 128):
+        """
+        Initialize ImageFolderLoader.
+        
+        Args:
+            folder_path: Path to folder containing images
+            cache_size: Number of images to cache (default: 128)
+        """
+        self.folder_path = Path(folder_path)
+        self._validate_folder()
+        
+        # Find all images
+        self._image_paths = self._scan_images()
+        if not self._image_paths:
+            raise RuntimeError(f"No supported images found in: {folder_path}")
+        
+        # Get dimensions from first image
+        first_image = cv2.imread(str(self._image_paths[0]))
+        if first_image is None:
+            raise RuntimeError(f"Cannot read first image: {self._image_paths[0]}")
+        
+        height, width = first_image.shape[:2]
+        
+        # Build metadata
+        self.metadata = ImageFolderMetadata(
+            path=str(self.folder_path),
+            folder_name=self.folder_path.name,
+            total_frames=len(self._image_paths),
+            image_paths=[str(p) for p in self._image_paths],
+            width=width,
+            height=height,
+            fps=1.0,
+            duration_seconds=float(len(self._image_paths))
+        )
+        
+        # For VideoLoader API compatibility
+        self.video_path = self.folder_path
+        
+        # Setup cache
+        self._cache_size = cache_size
+        self._frame_cache: Dict[int, np.ndarray] = {}
+        self._cache_order: List[int] = []
+        
+        logger.info(f"Loaded image folder: {self.metadata}")
+    
+    def _validate_folder(self) -> None:
+        """Validate folder exists."""
+        if not self.folder_path.exists():
+            raise FileNotFoundError(f"Folder not found: {self.folder_path}")
+        if not self.folder_path.is_dir():
+            raise NotADirectoryError(f"Not a directory: {self.folder_path}")
+    
+    def _scan_images(self) -> List[Path]:
+        """Scan folder for supported images, sorted by name."""
+        images = []
+        for ext in self.SUPPORTED_FORMATS:
+            images.extend(self.folder_path.glob(f"*{ext}"))
+            images.extend(self.folder_path.glob(f"*{ext.upper()}"))
+        
+        # Sort by filename (natural sort would be better but this works)
+        images = sorted(set(images), key=lambda p: p.name.lower())
+        return images
+    
+    def _add_to_cache(self, frame_idx: int, frame: np.ndarray) -> None:
+        """Add frame to cache with LRU eviction."""
+        if frame_idx in self._frame_cache:
+            self._cache_order.remove(frame_idx)
+            self._cache_order.append(frame_idx)
+            return
+        
+        while len(self._cache_order) >= self._cache_size:
+            oldest = self._cache_order.pop(0)
+            del self._frame_cache[oldest]
+        
+        self._frame_cache[frame_idx] = frame.copy()
+        self._cache_order.append(frame_idx)
+    
+    def _get_from_cache(self, frame_idx: int) -> Optional[np.ndarray]:
+        """Get frame from cache if available."""
+        if frame_idx in self._frame_cache:
+            self._cache_order.remove(frame_idx)
+            self._cache_order.append(frame_idx)
+            return self._frame_cache[frame_idx].copy()
+        return None
+    
+    def get_frame(self, index: int, use_cache: bool = True) -> np.ndarray:
+        """
+        Get image by index.
+        
+        Args:
+            index: Image index (0-based)
+            use_cache: Whether to use cache (default: True)
+            
+        Returns:
+            Image as numpy array (BGR format)
+        """
+        if index < 0 or index >= self.metadata.total_frames:
+            raise IndexError(
+                f"Image index {index} out of range [0, {self.metadata.total_frames - 1}]"
+            )
+        
+        # Check cache
+        if use_cache:
+            cached = self._get_from_cache(index)
+            if cached is not None:
+                return cached
+        
+        # Load image
+        image_path = self._image_paths[index]
+        frame = cv2.imread(str(image_path))
+        
+        if frame is None:
+            raise RuntimeError(f"Failed to read image: {image_path}")
+        
+        # Add to cache
+        if use_cache:
+            self._add_to_cache(index, frame)
+        
+        return frame
+    
+    def get_frame_rgb(self, index: int, use_cache: bool = True) -> np.ndarray:
+        """Get image in RGB format."""
+        frame_bgr = self.get_frame(index, use_cache)
+        return cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
+    
+    def get_image_path(self, index: int) -> str:
+        """Get the file path of image at index."""
+        if index < 0 or index >= self.metadata.total_frames:
+            raise IndexError(f"Image index {index} out of range")
+        return str(self._image_paths[index])
+    
+    def get_image_filename(self, index: int) -> str:
+        """Get the filename of image at index."""
+        if index < 0 or index >= self.metadata.total_frames:
+            raise IndexError(f"Image index {index} out of range")
+        return self._image_paths[index].name
+    
+    def get_thumbnail(
+        self, 
+        index: int, 
+        size: Tuple[int, int] = (160, 90)
+    ) -> np.ndarray:
+        """Get a thumbnail of an image."""
+        frame = self.get_frame(index)
+        return cv2.resize(frame, size, interpolation=cv2.INTER_AREA)
+    
+    def get_thumbnail_rgb(
+        self, 
+        index: int, 
+        size: Tuple[int, int] = (160, 90)
+    ) -> np.ndarray:
+        """Get a thumbnail in RGB format."""
+        thumbnail = self.get_thumbnail(index, size)
+        return cv2.cvtColor(thumbnail, cv2.COLOR_BGR2RGB)
+    
+    def generate_timeline_thumbnails(
+        self, 
+        num_thumbnails: int = 10,
+        size: Tuple[int, int] = (160, 90)
+    ) -> List[Tuple[int, np.ndarray]]:
+        """Generate evenly spaced thumbnails for timeline display."""
+        if num_thumbnails <= 0:
+            return []
+        
+        step = max(1, self.metadata.total_frames // num_thumbnails)
+        thumbnails = []
+        
+        for i in range(num_thumbnails):
+            idx = min(i * step, self.metadata.total_frames - 1)
+            thumb = self.get_thumbnail(idx, size)
+            thumbnails.append((idx, thumb))
+        
+        return thumbnails
+    
+    def get_metadata(self) -> ImageFolderMetadata:
+        """Get folder metadata."""
+        return self.metadata
+    
+    def frame_to_timestamp(self, frame_idx: int) -> float:
+        """Convert frame index to dummy timestamp (just returns index)."""
+        return float(frame_idx)
+    
+    def timestamp_to_frame(self, timestamp: float) -> int:
+        """Convert timestamp to frame index."""
+        return max(0, min(int(timestamp), self.metadata.total_frames - 1))
+    
+    def format_timestamp(self, frame_idx: int) -> str:
+        """Format as image index / total."""
+        return f"{frame_idx + 1}/{self.metadata.total_frames}"
+    
+    def clear_cache(self) -> None:
+        """Clear the image cache."""
+        self._frame_cache.clear()
+        self._cache_order.clear()
+    
+    def release(self) -> None:
+        """Release resources (for API compatibility)."""
+        self.clear_cache()
+    
+    def __len__(self) -> int:
+        return self.metadata.total_frames
+    
+    def __getitem__(self, index: int) -> np.ndarray:
+        return self.get_frame(index)
+    
+    def __iter__(self):
+        for idx in range(self.metadata.total_frames):
+            yield self.get_frame(idx)
+    
+    def __enter__(self):
+        return self
+    
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.release()
+
+
+# =============================================================================
 # Convenience functions
 # =============================================================================
 
@@ -412,6 +672,20 @@ def load_video(video_path: str, cache_size: int = 128) -> VideoLoader:
         VideoLoader instance
     """
     return VideoLoader(video_path, cache_size)
+
+
+def load_images(folder_path: str, cache_size: int = 128) -> ImageFolderLoader:
+    """
+    Convenience function to load an image folder.
+    
+    Args:
+        folder_path: Path to folder containing images
+        cache_size: Number of images to cache
+        
+    Returns:
+        ImageFolderLoader instance
+    """
+    return ImageFolderLoader(folder_path, cache_size)
 
 
 def extract_frames(
@@ -448,14 +722,21 @@ def extract_frames(
 
 
 # =============================================================================
+# Type alias for unified loader
+# =============================================================================
+
+MediaLoader = Union[VideoLoader, ImageFolderLoader]
+
+
+# =============================================================================
 # Test / Demo
 # =============================================================================
 
 if __name__ == "__main__":
     import argparse
     
-    parser = argparse.ArgumentParser(description="Video Loader Test")
-    parser.add_argument("video", type=str, help="Path to video file")
+    parser = argparse.ArgumentParser(description="Video/Image Loader Test")
+    parser.add_argument("path", type=str, help="Path to video file or image folder")
     parser.add_argument("--frame", type=int, default=0, help="Frame to extract")
     parser.add_argument("--output", type=str, default=None, help="Output path for frame")
     args = parser.parse_args()
@@ -464,14 +745,22 @@ if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
     
     print("=" * 60)
-    print("Video Loader Test")
+    print("Video/Image Loader Test")
     print("=" * 60)
     
-    with VideoLoader(args.video) as loader:
+    path = Path(args.path)
+    
+    # Determine if it's a video or folder
+    if path.is_dir():
+        print(f"\n📁 Loading image folder: {path}")
+        loader = ImageFolderLoader(str(path))
+    else:
+        print(f"\n📹 Loading video: {path}")
+        loader = VideoLoader(str(path))
+    
+    with loader:
         # Print metadata
-        print(f"\n📹 {loader.metadata}")
-        print(f"   Codec: {loader.metadata.codec}")
-        print(f"   Duration: {loader.format_timestamp(loader.metadata.total_frames - 1)}")
+        print(f"\n📊 {loader.metadata}")
         
         # Get specific frame
         print(f"\n⏳ Loading frame {args.frame}...")
