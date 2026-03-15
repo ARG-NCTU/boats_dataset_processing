@@ -66,7 +66,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 # Import our modules
 try:
-    from core.video_loader import VideoLoader
+    from core.video_loader import VideoLoader, ImageFolderLoader
     from core.sam3_engine import SAM3Engine, FrameResult, visualize_frame_results, Detection
     from core.confidence_analyzer import (
         ConfidenceAnalyzer, 
@@ -300,6 +300,148 @@ class SAM3Worker(QThread):
             self._cleanup()
             
             # 如果是取消導致的錯誤，發送取消信號而不是錯誤
+            if self._cancelled:
+                self.cancelled.emit()
+            else:
+                self.error.emit(error_msg)
+
+
+# =============================================================================
+# Image Batch Worker (for Independent Image Processing)
+# =============================================================================
+
+class ImageBatchWorker(QThread):
+    """
+    背景執行緒處理批次獨立圖片。
+    
+    與 SAM3Worker 不同，這個 Worker：
+    - 每張圖片獨立使用 detect_image()
+    - 不使用 propagate（因為場景不連續）
+    - 適用於不同場景的多張照片
+    
+    信號 (Signals):
+    - progress: 回報進度 (current_idx, total, message)
+    - image_result: 單張圖片處理完成 (frame_idx, FrameResult)
+    - finished: 全部完成 (Dict[int, FrameResult])
+    - error: 發生錯誤
+    - cancelled: 取消時發出
+    """
+    progress = pyqtSignal(int, int, str)      # (當前索引, 總數, 訊息)
+    image_result = pyqtSignal(int, object)    # (frame_idx, FrameResult) - 即時回報
+    finished = pyqtSignal(dict)               # 全部結果
+    error = pyqtSignal(str)                   # 錯誤訊息
+    cancelled = pyqtSignal()                  # 取消信號
+    
+    def __init__(self, image_paths: list, prompt: str, mode: str = "gpu"):
+        """
+        初始化 ImageBatchWorker。
+        
+        Args:
+            image_paths: 圖片路徑列表
+            prompt: 文字提示
+            mode: SAM3 模式 ("gpu" 或 "mock")
+        """
+        super().__init__()
+        self.image_paths = image_paths
+        self.prompt = prompt
+        self.mode = mode
+        self._cancelled = False
+        self._engine = None
+    
+    def cancel(self):
+        """請求取消處理"""
+        logger.info("ImageBatchWorker: Cancel requested")
+        self._cancelled = True
+    
+    def _cleanup(self):
+        """清理資源"""
+        try:
+            if self._engine:
+                self._engine.shutdown()
+                self._engine = None
+        except Exception as e:
+            logger.warning(f"ImageBatchWorker: Cleanup error (ignored): {e}")
+        
+        try:
+            clear_gpu_memory()
+        except:
+            pass
+    
+    def run(self):
+        """執行緒主函數 - 逐張處理圖片"""
+        results = {}
+        total = len(self.image_paths)
+        
+        try:
+            # 清理 GPU
+            self.progress.emit(0, total, "Clearing GPU memory...")
+            clear_gpu_memory()
+            
+            if self._cancelled:
+                self.cancelled.emit()
+                return
+            
+            # 載入 SAM3 模型
+            self.progress.emit(0, total, "Loading SAM3 model...")
+            logger.info(f"ImageBatchWorker starting: {total} images, prompt={self.prompt}")
+            
+            self._engine = SAM3Engine(mode=self.mode)
+            
+            if self._cancelled:
+                self._cleanup()
+                self.cancelled.emit()
+                return
+            
+            # 逐張處理
+            for idx, image_path in enumerate(self.image_paths):
+                if self._cancelled:
+                    self._cleanup()
+                    self.cancelled.emit()
+                    return
+                
+                filename = Path(image_path).name
+                self.progress.emit(idx, total, f"Processing {filename} ({idx+1}/{total})...")
+                
+                try:
+                    # 讀取圖片
+                    image = cv2.imread(str(image_path))
+                    if image is None:
+                        logger.warning(f"Cannot read image: {image_path}")
+                        continue
+                    
+                    # 使用 detect_image 進行獨立偵測
+                    frame_result = self._engine.detect_image(image, self.prompt)
+                    
+                    # 更新 frame_index 為正確的索引
+                    frame_result.frame_index = idx
+                    
+                    results[idx] = frame_result
+                    
+                    # 即時回報結果
+                    self.image_result.emit(idx, frame_result)
+                    
+                    logger.info(f"Processed {filename}: {frame_result.num_objects} objects")
+                    
+                except Exception as e:
+                    logger.error(f"Error processing {image_path}: {e}")
+                    # 繼續處理下一張，不中斷整個流程
+            
+            # 完成
+            self._cleanup()
+            
+            if self._cancelled:
+                self.cancelled.emit()
+                return
+            
+            self.progress.emit(total, total, "Done!")
+            self.finished.emit({"results": results})
+            
+        except Exception as e:
+            import traceback
+            error_msg = f"{type(e).__name__}: {str(e)}\n\n{traceback.format_exc()}"
+            logger.error(f"ImageBatchWorker error: {error_msg}")
+            self._cleanup()
+            
             if self._cancelled:
                 self.cancelled.emit()
             else:
@@ -1011,6 +1153,7 @@ class HILAAMainWindow(QMainWindow):
         # Detection worker 狀態
         self.worker: Optional[SAM3Worker] = None
         self.progress_dialog: Optional[QProgressDialog] = None
+        self._is_image_folder_mode: bool = False  # 是否為圖片資料夾模式
         
         # 設定 UI
         self.setup_ui()
@@ -1193,6 +1336,23 @@ class HILAAMainWindow(QMainWindow):
         mode_layout.addStretch()
         settings_layout.addLayout(mode_layout)
         
+        # Processing Mode (Video vs Images)
+        proc_mode_layout = QHBoxLayout()
+        proc_mode_layout.addWidget(QLabel("Input:"))
+        self.processing_mode_combo = QComboBox()
+        self.processing_mode_combo.addItems([
+            "Video (Sequential Tracking)",
+            "Images (Independent Detection)"
+        ])
+        self.processing_mode_combo.setToolTip(
+            "Video: Load video file, use SAM3 tracking to propagate masks\n"
+            "Images: Load image folder, process each image independently\n"
+            "        (No cross-image tracking - suitable for different scenes)"
+        )
+        self.processing_mode_combo.currentIndexChanged.connect(self._on_processing_mode_changed)
+        proc_mode_layout.addWidget(self.processing_mode_combo)
+        settings_layout.addLayout(proc_mode_layout)
+        
         # Maritime ROI (Horizon Detection)
         maritime_layout = QHBoxLayout()
         self.maritime_roi_checkbox = QCheckBox("Enable Maritime ROI")
@@ -1304,7 +1464,7 @@ class HILAAMainWindow(QMainWindow):
         objects_layout.addWidget(self.object_list)
         
         # 物件管理提示
-        manage_hint = QLabel("Right-click on object for more options")
+        manage_hint = QLabel("💡 Right-click on object for more options")
         manage_hint.setStyleSheet("color: #888; font-size: 10px;")
         objects_layout.addWidget(manage_hint)
         
@@ -1328,6 +1488,11 @@ class HILAAMainWindow(QMainWindow):
         open_action.setShortcut(QKeySequence("Ctrl+O"))
         open_action.triggered.connect(self.open_video)
         file_menu.addAction(open_action)
+        
+        open_folder_action = QAction("Open Image &Folder", self)
+        open_folder_action.setShortcut(QKeySequence("Ctrl+Shift+O"))
+        open_folder_action.triggered.connect(self.open_image_folder)
+        file_menu.addAction(open_folder_action)
         
         file_menu.addSeparator()
         
@@ -1395,26 +1560,26 @@ class HILAAMainWindow(QMainWindow):
         menu = QMenu(self)
         
         # 刪除物件
-        delete_action = menu.addAction("Delete Object (All Frames)")
+        delete_action = menu.addAction("🗑️ Delete Object (All Frames)")
         delete_action.triggered.connect(lambda: self.delete_object(obj_id))
         
-        delete_from_action = menu.addAction("Delete From Current Frame")
+        delete_from_action = menu.addAction("🗑️ Delete From Current Frame")
         delete_from_action.triggered.connect(lambda: self.delete_object_from_frame(obj_id, self.current_frame))
         
         menu.addSeparator()
         
         # 合併物件
-        merge_action = menu.addAction("Merge Into Another Object...")
+        merge_action = menu.addAction("🔗 Merge Into Another Object...")
         merge_action.triggered.connect(lambda: self.show_merge_dialog(obj_id))
         
         # 交換標籤
-        swap_action = menu.addAction("Swap Label With...")
+        swap_action = menu.addAction("🔄 Swap Label With...")
         swap_action.triggered.connect(lambda: self.show_swap_dialog(obj_id))
         
         menu.addSeparator()
         
         # 跳轉到物件首次出現的幀
-        jump_action = menu.addAction("Jump to First Appearance")
+        jump_action = menu.addAction("📍 Jump to First Appearance")
         jump_action.triggered.connect(lambda: self.jump_to_object_first_frame(obj_id))
         
         # 顯示選單
@@ -1463,7 +1628,7 @@ class HILAAMainWindow(QMainWindow):
         
         # 更新 UI（先 reanalyze，再 track）
         self._reanalyze_with_preserved_edits()
-        self._track_human_intervention(edited_frame)  
+        self._track_human_intervention(edited_frame)  # ← 添加這行！
         self.update_object_list()
         self.update_analysis_display()
         self.update_timeline()
@@ -1970,6 +2135,12 @@ class HILAAMainWindow(QMainWindow):
             # 建立新的 loader
             self.video_loader = VideoLoader(file_path)
             
+            # 重置圖片模式標誌
+            self._is_image_folder_mode = False
+            
+            # 自動切換到 Video 模式
+            self.processing_mode_combo.setCurrentIndex(0)
+            
             # 清除之前的結果
             self.sam3_results = {}
             self.video_analysis = None
@@ -2025,6 +2196,93 @@ class HILAAMainWindow(QMainWindow):
             
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Cannot open video:\n{e}")
+    
+    def open_image_folder(self):
+        """開啟圖片資料夾（獨立處理模式）。"""
+        folder_path = QFileDialog.getExistingDirectory(
+            self,
+            "Select Image Folder",
+            "",
+            QFileDialog.Option.ShowDirsOnly
+        )
+        
+        if not folder_path:
+            return
+        
+        try:
+            # 結束之前的 session（如果有）
+            if self.action_logger is not None and self.action_logger.session is not None:
+                self.action_logger.end_session()
+            
+            # 釋放之前的 loader
+            if self.video_loader is not None:
+                self.video_loader.release()
+            
+            # 建立 ImageFolderLoader
+            self.video_loader = ImageFolderLoader(folder_path)
+            
+            # 標記為圖片模式
+            self._is_image_folder_mode = True
+            
+            # 清除之前的結果
+            self.sam3_results = {}
+            self.video_analysis = None
+            self.object_status = {}
+            self.object_list.clear()
+            
+            # 更新 UI
+            total = self.video_loader.metadata.total_frames
+            meta = self.video_loader.metadata
+            self.timeline_slider.setMaximum(total - 1)
+            self.timeline_slider.setValue(0)
+            self.timeline_slider.setEnabled(True)
+            
+            self.prev_btn.setEnabled(True)
+            self.play_btn.setEnabled(False)  # 圖片模式不支援播放
+            self.next_btn.setEnabled(True)
+            self.detect_btn.setEnabled(True)
+            self.add_object_btn.setEnabled(True)
+            
+            # 自動切換到 Images 模式
+            self.processing_mode_combo.setCurrentIndex(1)
+            
+            # === ActionLogger: 創建，使用圖片資料夾的 logs 子目錄 ===
+            logs_dir = Path(folder_path) / "logs"
+            self.action_logger = ActionLogger(
+                output_dir=str(logs_dir),
+                format="jsonl",
+                auto_flush=True
+            )
+            
+            # === ActionLogger: 開始新 session ===
+            self.action_logger.start_session(
+                video_path=folder_path,  # 使用資料夾路徑
+                total_frames=total,
+                width=meta.width,
+                height=meta.height,
+                fps=1.0,  # 圖片沒有 fps
+            )
+            self._last_logged_frame = 0
+            
+            # 顯示第一張圖片
+            self.display_frame(0)
+            
+            # 更新分析標籤
+            self.analysis_label.setText(
+                f"Folder: {self.video_loader.metadata.folder_name}\n"
+                f"Images: {total}\n"
+                f"Resolution: {meta.width}x{meta.height}\n\n"
+                "Mode: Independent Detection\n"
+                "(Each image processed separately)\n\n"
+                "Please run detection"
+            )
+            
+            self.statusBar().showMessage(
+                f"Opened folder: {folder_path} ({total} images) | Logs: {logs_dir}"
+            )
+            
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Cannot open image folder:\n{e}")
     
     def next_frame(self):
         """下一幀。"""
@@ -2139,13 +2397,28 @@ class HILAAMainWindow(QMainWindow):
         # 停止播放
         self.stop_play()
         
+        # 判斷處理模式
+        is_image_mode = (
+            self.processing_mode_combo.currentIndex() == 1 or 
+            getattr(self, '_is_image_folder_mode', False)
+        )
+        
+        if is_image_mode:
+            # === 圖片獨立處理模式 ===
+            self._run_batch_detection(prompt, mode)
+        else:
+            # === 影片追蹤模式 ===
+            self._run_video_detection(prompt, mode)
+    
+    def _run_video_detection(self, prompt: str, mode: str):
+        """執行影片追蹤模式的偵測（原本的流程）。"""
         # Maritime ROI：偵測海平線
         if self.maritime_roi_checkbox.isChecked():
             self._run_horizon_detection()
         
         # 取得影片路徑（確保是字串）
         video_path = str(self.video_loader.video_path)
-        logger.info(f"Starting detection: video={video_path}, prompt={prompt}, mode={mode}")
+        logger.info(f"Starting video detection: video={video_path}, prompt={prompt}, mode={mode}")
         
         # === ActionLogger: 記錄偵測開始 ===
         self._detection_start_time = time.time()
@@ -2174,6 +2447,175 @@ class HILAAMainWindow(QMainWindow):
         
         self.detect_btn.setEnabled(False)
         self.worker.start()
+    
+    def _run_batch_detection(self, prompt: str, mode: str):
+        """執行圖片獨立處理模式的偵測。"""
+        # 取得圖片路徑列表
+        if isinstance(self.video_loader, ImageFolderLoader):
+            image_paths = self.video_loader.metadata.image_paths
+        else:
+            # 如果是 VideoLoader，需要先提取幀（這種情況較少見）
+            QMessageBox.warning(
+                self, "Warning", 
+                "Please use 'Open Image Folder' for independent image processing,\n"
+                "or switch to 'Video (Sequential Tracking)' mode."
+            )
+            return
+        
+        total = len(image_paths)
+        logger.info(f"Starting batch detection: {total} images, prompt={prompt}, mode={mode}")
+        
+        # === ActionLogger: 記錄偵測開始 ===
+        self._detection_start_time = time.time()
+        self.action_logger.log_detection_started(prompt=prompt, frame_idx=0)
+        
+        # 建立進度對話框
+        self.progress_dialog = QProgressDialog(
+            f"Processing {total} images...", "Cancel", 0, total, self
+        )
+        self.progress_dialog.setWindowTitle("Batch Processing")
+        self.progress_dialog.setWindowModality(Qt.WindowModality.WindowModal)
+        self.progress_dialog.setMinimumDuration(0)
+        self.progress_dialog.setAutoClose(False)
+        self.progress_dialog.setAutoReset(False)
+        
+        # 建立並啟動 ImageBatchWorker
+        self.worker = ImageBatchWorker(image_paths, prompt, mode)
+        self.worker.progress.connect(self.on_batch_progress)
+        self.worker.image_result.connect(self.on_batch_image_result)
+        self.worker.finished.connect(self.on_batch_finished)
+        self.worker.error.connect(self.on_batch_error)
+        self.worker.cancelled.connect(self.on_batch_cancelled)
+        
+        # 連接取消按鈕
+        self.progress_dialog.canceled.connect(self._on_cancel_detection)
+        
+        self.detect_btn.setEnabled(False)
+        self.worker.start()
+    
+    # =========================================================================
+    # Batch Processing Callbacks (for Independent Image Mode)
+    # =========================================================================
+    
+    def on_batch_progress(self, current: int, total: int, message: str):
+        """批次處理進度更新。"""
+        if hasattr(self, 'progress_dialog') and self.progress_dialog:
+            self.progress_dialog.setValue(current)
+            self.progress_dialog.setLabelText(message)
+    
+    def on_batch_image_result(self, frame_idx: int, frame_result):
+        """單張圖片處理完成（即時回報）。"""
+        # 儲存結果
+        self.sam3_results[frame_idx] = frame_result
+        
+        # 如果是當前顯示的幀，立即更新顯示
+        if frame_idx == self.current_frame:
+            self.display_frame(frame_idx)
+        
+        logger.debug(f"Image {frame_idx} processed: {frame_result.num_objects} objects")
+    
+    def on_batch_finished(self, result: dict):
+        """批次處理完成。"""
+        # 清理對話框和 worker
+        if hasattr(self, 'progress_dialog') and self.progress_dialog:
+            self.progress_dialog.close()
+            self.progress_dialog = None
+        
+        if hasattr(self, 'worker') and self.worker:
+            self.worker.wait(500)
+            self.worker = None
+        
+        self.detect_btn.setEnabled(True)
+        
+        # 儲存結果（可能已經在 on_batch_image_result 中部分儲存）
+        self.sam3_results = result.get("results", self.sam3_results)
+        
+        # 分析結果
+        self.video_analysis = self.analyzer.analyze_video(self.sam3_results)
+        
+        # === ActionLogger: 記錄偵測完成 ===
+        if self._detection_start_time:
+            duration = time.time() - self._detection_start_time
+        else:
+            duration = 0.0
+        self.action_logger.log_detection_finished(
+            num_objects=self.video_analysis.unique_objects,
+            duration_seconds=duration,
+            num_frames=len(self.sam3_results)
+        )
+        self._detection_start_time = None
+        
+        # 注意：圖片模式不運行 Jitter Detection（因為沒有時序連續性）
+        self.jitter_analysis = None
+        
+        # 更新物件列表
+        self.update_object_list()
+        
+        # 更新分析顯示
+        self.update_analysis_display()
+        
+        # 更新 Timeline
+        self.update_timeline()
+        
+        # 重新顯示當前幀
+        self.display_frame(self.current_frame)
+        
+        self.statusBar().showMessage(
+            f"Batch detection completed: {self.video_analysis.unique_objects} objects "
+            f"across {len(self.sam3_results)} images"
+        )
+    
+    def on_batch_error(self, error_msg: str):
+        """批次處理錯誤。"""
+        # 清理對話框和 worker
+        if hasattr(self, 'progress_dialog') and self.progress_dialog:
+            self.progress_dialog.close()
+            self.progress_dialog = None
+        
+        if hasattr(self, 'worker') and self.worker:
+            self.worker.wait(500)
+            self.worker = None
+        
+        self.detect_btn.setEnabled(True)
+        self._detection_start_time = None
+        
+        # 顯示錯誤
+        display_msg = error_msg
+        if len(error_msg) > 1000:
+            display_msg = error_msg[:1000] + "\n\n... (see terminal for full error)"
+        
+        logger.error(f"Batch detection error:\n{error_msg}")
+        QMessageBox.critical(self, "Batch Detection Error", f"Processing failed:\n\n{display_msg}")
+    
+    def on_batch_cancelled(self):
+        """批次處理被取消。"""
+        logger.info("Batch detection cancelled")
+        
+        # 清理
+        if hasattr(self, 'progress_dialog') and self.progress_dialog:
+            self.progress_dialog.close()
+            self.progress_dialog = None
+        
+        if hasattr(self, 'worker') and self.worker:
+            self.worker.wait(1000)
+            if self.worker.isRunning():
+                self.worker.terminate()
+                self.worker.wait(500)
+            self.worker = None
+        
+        self.detect_btn.setEnabled(True)
+        self._detection_start_time = None
+        
+        # 如果已經處理了一部分，保留那些結果
+        if self.sam3_results:
+            self.video_analysis = self.analyzer.analyze_video(self.sam3_results)
+            self.update_object_list()
+            self.update_analysis_display()
+            self.statusBar().showMessage(
+                f"Detection cancelled - {len(self.sam3_results)} images processed"
+            )
+        else:
+            self.statusBar().showMessage("Detection cancelled")
     
     def _on_cancel_detection(self):
         """處理取消偵測請求"""
@@ -2763,6 +3205,17 @@ class HILAAMainWindow(QMainWindow):
             self.update_object_list()
             self.update_analysis_display()
             self.display_frame(self.current_frame)
+    
+    def _on_processing_mode_changed(self, index):
+        """Processing Mode 改變時的處理。"""
+        if index == 0:
+            # Video mode
+            logger.info("Processing mode: Video (Sequential Tracking)")
+            self.statusBar().showMessage("Mode: Video - Use File → Open Video")
+        else:
+            # Independent Images mode
+            logger.info("Processing mode: Images (Independent Detection)")
+            self.statusBar().showMessage("Mode: Images - Use File → Open Image Folder")
     
     def _on_maritime_roi_changed(self, state):
         """Maritime ROI checkbox 狀態改變。"""
