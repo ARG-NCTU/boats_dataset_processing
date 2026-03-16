@@ -2398,16 +2398,29 @@ class HILAAMainWindow(QMainWindow):
         self.stop_play()
         
         # 判斷處理模式
-        is_image_mode = (
-            self.processing_mode_combo.currentIndex() == 1 or 
-            getattr(self, '_is_image_folder_mode', False)
-        )
+        # 0 = Video Mode (propagate)
+        # 1 = Sequential Images (propagate) - 連續場景照片，使用追蹤
+        # 2 = Independent Images (detect_image) - 獨立場景照片，分別處理
+        processing_mode = self.processing_mode_combo.currentIndex()
+        is_image_folder = isinstance(self.video_loader, ImageFolderLoader)
         
-        if is_image_mode:
-            # === 圖片獨立處理模式 ===
+        if processing_mode == 2:
+            # === Independent Images 模式：每張圖片獨立偵測 ===
             self._run_batch_detection(prompt, mode)
+        elif processing_mode == 1 and is_image_folder:
+            # === Sequential Images 模式 + 圖片資料夾 ===
+            # 暫時使用 Independent 處理（SAM3 不支援圖片序列的 propagate）
+            reply = QMessageBox.question(
+                self, "Sequential Images Mode",
+                "Sequential tracking for image folders is not yet fully implemented.\n\n"
+                "Would you like to process images independently instead?\n"
+                "(Each image will be detected separately, no cross-image tracking)",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+            )
+            if reply == QMessageBox.StandardButton.Yes:
+                self._run_batch_detection(prompt, mode)
         else:
-            # === 影片追蹤模式 ===
+            # === Video 模式（或 Sequential + 影片檔案）===
             self._run_video_detection(prompt, mode)
     
     def _run_video_detection(self, prompt: str, mode: str):
