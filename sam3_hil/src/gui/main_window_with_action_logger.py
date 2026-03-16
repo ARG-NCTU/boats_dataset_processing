@@ -529,12 +529,14 @@ class ObjectListItem(QWidget):
         obj_id: int, 
         score: float, 
         category: ConfidenceCategory,
+        frame_idx: int = None,  # 新增：幀索引（Independent 模式用）
         parent=None
     ):
         super().__init__(parent)
         self.obj_id = obj_id
         self.score = score
         self.category = category
+        self.frame_idx = frame_idx  # 新增
         self.status = "pending"  # pending, accepted, rejected
         
         self.setup_ui()
@@ -550,8 +552,11 @@ class ObjectListItem(QWidget):
         self.update_color()
         layout.addWidget(self.color_indicator)
         
-        # 物件資訊
-        info_text = f"Obj {self.obj_id}: {self.score:.2f}"
+        # 物件資訊 - Independent 模式顯示幀號
+        if self.frame_idx is not None:
+            info_text = f"[F{self.frame_idx}] Det {self.obj_id}: {self.score:.2f}"
+        else:
+            info_text = f"Obj {self.obj_id}: {self.score:.2f}"
         self.info_label = QLabel(info_text)
         self.info_label.setFont(QFont("Monospace", 10))
         layout.addWidget(self.info_label)
@@ -1553,6 +1558,7 @@ class HILAAMainWindow(QMainWindow):
             return
         
         obj_id = widget.property("obj_id")
+        frame_idx = widget.property("frame_idx")  # 可能為 None（Video 模式）
         if obj_id is None:
             return
         
@@ -1568,7 +1574,9 @@ class HILAAMainWindow(QMainWindow):
         
         # 只刪除當前幀（兩種模式都有）
         delete_this_action = menu.addAction("🗑️ Delete This Detection Only")
-        delete_this_action.triggered.connect(lambda: self.delete_object_single_frame(obj_id, self.current_frame))
+        # Independent 模式用物件所在的幀，Video 模式用當前顯示的幀
+        target_frame = frame_idx if frame_idx is not None else self.current_frame
+        delete_this_action.triggered.connect(lambda: self.delete_object_single_frame(obj_id, target_frame))
         
         # Video 模式額外提供「從當前幀刪到最後」
         if not is_independent_mode:
@@ -3140,34 +3148,77 @@ class HILAAMainWindow(QMainWindow):
         if self.video_analysis is None:
             return
         
-        # 按平均分數排序
-        sorted_objects = sorted(
-            self.video_analysis.object_summaries.values(),
-            key=lambda x: x.avg_score,
-            reverse=True
-        )
+        # 判斷是否為 Independent Images 模式
+        is_independent_mode = (self.processing_mode_combo.currentIndex() == 1)
         
-        for obj_summary in sorted_objects:
-            category = self.analyzer.categorize(obj_summary.avg_score)
+        if is_independent_mode:
+            # === Independent 模式：按幀顯示，使用複合 key ===
+            # 收集所有幀的所有物件
+            all_detections = []  # [(frame_idx, obj_id, score, category), ...]
             
-            # 建立列表項目
-            item = QListWidgetItem()
-            item_widget = ObjectListItem(
-                obj_summary.obj_id,
-                obj_summary.avg_score,
-                category
+            for frame_idx, frame_result in self.sam3_results.items():
+                for det in frame_result.detections:
+                    category = self.analyzer.categorize(det.score)
+                    all_detections.append((frame_idx, det.obj_id, det.score, category))
+            
+            # 按幀索引排序，然後按 obj_id 排序
+            all_detections.sort(key=lambda x: (x[0], x[1]))
+            
+            for frame_idx, obj_id, score, category in all_detections:
+                # 複合 key
+                composite_key = f"F{frame_idx}_{obj_id}"
+                
+                # 建立列表項目
+                item = QListWidgetItem()
+                item_widget = ObjectListItem(
+                    obj_id,
+                    score,
+                    category,
+                    frame_idx=frame_idx  # 傳遞幀索引
+                )
+                item_widget.status_changed.connect(self.on_object_status_changed)
+                
+                # 設置複合 key 以便後續取得
+                item_widget.setProperty("obj_id", obj_id)
+                item_widget.setProperty("frame_idx", frame_idx)
+                item_widget.setProperty("composite_key", composite_key)
+                
+                item.setSizeHint(item_widget.sizeHint())
+                self.object_list.addItem(item)
+                self.object_list.setItemWidget(item, item_widget)
+                
+                # 初始化狀態（使用複合 key）
+                self.object_status[composite_key] = "pending"
+        else:
+            # === Video 模式：原本的邏輯 ===
+            # 按平均分數排序
+            sorted_objects = sorted(
+                self.video_analysis.object_summaries.values(),
+                key=lambda x: x.avg_score,
+                reverse=True
             )
-            item_widget.status_changed.connect(self.on_object_status_changed)
             
-            # 設置 obj_id property 以便後續取得
-            item_widget.setProperty("obj_id", obj_summary.obj_id)
-            
-            item.setSizeHint(item_widget.sizeHint())
-            self.object_list.addItem(item)
-            self.object_list.setItemWidget(item, item_widget)
-            
-            # 初始化狀態
-            self.object_status[obj_summary.obj_id] = "pending"
+            for obj_summary in sorted_objects:
+                category = self.analyzer.categorize(obj_summary.avg_score)
+                
+                # 建立列表項目
+                item = QListWidgetItem()
+                item_widget = ObjectListItem(
+                    obj_summary.obj_id,
+                    obj_summary.avg_score,
+                    category
+                )
+                item_widget.status_changed.connect(self.on_object_status_changed)
+                
+                # 設置 obj_id property 以便後續取得
+                item_widget.setProperty("obj_id", obj_summary.obj_id)
+                
+                item.setSizeHint(item_widget.sizeHint())
+                self.object_list.addItem(item)
+                self.object_list.setItemWidget(item, item_widget)
+                
+                # 初始化狀態
+                self.object_status[obj_summary.obj_id] = "pending"
         
         self.accept_all_high_btn.setEnabled(True)
         self.reset_all_btn.setEnabled(True)
