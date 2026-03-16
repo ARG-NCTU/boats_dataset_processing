@@ -522,14 +522,14 @@ class ObjectListItem(QWidget):
     - 審閱狀態（待審閱/已接受/已拒絕）
     """
     
-    status_changed = pyqtSignal(int, str)  # (obj_id, status)
+    status_changed = pyqtSignal(int, str, object)  # (obj_id, status, frame_idx) - frame_idx 可能是 None
     
     def __init__(
         self, 
         obj_id: int, 
         score: float, 
         category: ConfidenceCategory,
-        frame_idx: int = None,  # 新增：幀索引（Independent 模式用）
+        frame_idx: int = None,  # 新增：Independent 模式用
         parent=None
     ):
         super().__init__(parent)
@@ -601,7 +601,7 @@ class ObjectListItem(QWidget):
         self.status_label.setToolTip("accepted")
         self.accept_btn.setEnabled(False)
         self.reject_btn.setEnabled(True)
-        self.status_changed.emit(self.obj_id, "accepted")
+        self.status_changed.emit(self.obj_id, "accepted", self.frame_idx)  # 傳遞 frame_idx
     
     def reject(self):
         """拒絕此物件。"""
@@ -610,7 +610,7 @@ class ObjectListItem(QWidget):
         self.status_label.setToolTip("rejected")
         self.accept_btn.setEnabled(True)
         self.reject_btn.setEnabled(False)
-        self.status_changed.emit(self.obj_id, "rejected")
+        self.status_changed.emit(self.obj_id, "rejected", self.frame_idx)  # 傳遞 frame_idx
     
     def reset(self):
         """重設狀態。"""
@@ -1401,10 +1401,10 @@ class HILAAMainWindow(QMainWindow):
         
         # 批次操作
         batch_layout = QHBoxLayout()
-        self.accept_all_high_btn = QPushButton("✓ Accept all HIGH")
-        self.accept_all_high_btn.clicked.connect(self.accept_all_high)
-        self.accept_all_high_btn.setEnabled(False)
-        batch_layout.addWidget(self.accept_all_high_btn)
+        self.accept_all_btn = QPushButton("✓ Accept all")
+        self.accept_all_btn.clicked.connect(self.accept_all)
+        self.accept_all_btn.setEnabled(False)
+        batch_layout.addWidget(self.accept_all_btn)
         
         self.reset_all_btn = QPushButton("↺ Reset")
         self.reset_all_btn.clicked.connect(self.reset_all_objects)
@@ -2096,9 +2096,16 @@ class HILAAMainWindow(QMainWindow):
         high_thresh = self.high_thresh_spin.value()
         low_thresh = self.low_thresh_spin.value()
         
+        # 判斷是否為 Independent 模式
+        is_independent_mode = (self.processing_mode_combo.currentIndex() == 1)
+        
         for det in result.detections:
-            # 檢查物件狀態
-            obj_status = self.object_status.get(det.obj_id, "pending")
+            # 檢查物件狀態 - 根據模式使用不同的 key
+            if is_independent_mode:
+                status_key = f"F{result.frame_index}_{det.obj_id}"
+            else:
+                status_key = det.obj_id
+            obj_status = self.object_status.get(status_key, "pending")
             
             # 被拒絕的物件不顯示
             if obj_status == "rejected":
@@ -3143,85 +3150,97 @@ class HILAAMainWindow(QMainWindow):
     def update_object_list(self):
         """更新物件列表。"""
         self.object_list.clear()
-        self.object_status = {}
-        
-        if self.video_analysis is None:
-            return
         
         # 判斷是否為 Independent Images 模式
         is_independent_mode = (self.processing_mode_combo.currentIndex() == 1)
         
         if is_independent_mode:
-            # === Independent 模式：按幀顯示，使用複合 key ===
-            # 收集所有幀的所有物件
-            all_detections = []  # [(frame_idx, obj_id, score, category), ...]
-            
-            for frame_idx, frame_result in self.sam3_results.items():
-                for det in frame_result.detections:
-                    category = self.analyzer.categorize(det.score)
-                    all_detections.append((frame_idx, det.obj_id, det.score, category))
-            
-            # 按幀索引排序，然後按 obj_id 排序
-            all_detections.sort(key=lambda x: (x[0], x[1]))
-            
-            for frame_idx, obj_id, score, category in all_detections:
-                # 複合 key
-                composite_key = f"F{frame_idx}_{obj_id}"
-                
-                # 建立列表項目
-                item = QListWidgetItem()
-                item_widget = ObjectListItem(
-                    obj_id,
-                    score,
-                    category,
-                    frame_idx=frame_idx  # 傳遞幀索引
-                )
-                item_widget.status_changed.connect(self.on_object_status_changed)
-                
-                # 設置複合 key 以便後續取得
-                item_widget.setProperty("obj_id", obj_id)
-                item_widget.setProperty("frame_idx", frame_idx)
-                item_widget.setProperty("composite_key", composite_key)
-                
-                item.setSizeHint(item_widget.sizeHint())
-                self.object_list.addItem(item)
-                self.object_list.setItemWidget(item, item_widget)
-                
-                # 初始化狀態（使用複合 key）
-                self.object_status[composite_key] = "pending"
+            # === Independent 模式：顯示所有幀的所有物件 ===
+            self._update_object_list_independent()
         else:
-            # === Video 模式：原本的邏輯 ===
-            # 按平均分數排序
-            sorted_objects = sorted(
-                self.video_analysis.object_summaries.values(),
-                key=lambda x: x.avg_score,
-                reverse=True
-            )
-            
-            for obj_summary in sorted_objects:
-                category = self.analyzer.categorize(obj_summary.avg_score)
-                
-                # 建立列表項目
-                item = QListWidgetItem()
-                item_widget = ObjectListItem(
-                    obj_summary.obj_id,
-                    obj_summary.avg_score,
-                    category
-                )
-                item_widget.status_changed.connect(self.on_object_status_changed)
-                
-                # 設置 obj_id property 以便後續取得
-                item_widget.setProperty("obj_id", obj_summary.obj_id)
-                
-                item.setSizeHint(item_widget.sizeHint())
-                self.object_list.addItem(item)
-                self.object_list.setItemWidget(item, item_widget)
-                
-                # 初始化狀態
-                self.object_status[obj_summary.obj_id] = "pending"
+            # === Video 模式：顯示跨幀聚合的物件 ===
+            self._update_object_list_video()
         
-        self.accept_all_high_btn.setEnabled(True)
-        self.reset_all_btn.setEnabled(True)
+        self.accept_all_btn.setEnabled(self.object_list.count() > 0)
+        self.reset_all_btn.setEnabled(self.object_list.count() > 0)
+    
+    def _update_object_list_video(self):
+        """Video 模式：顯示跨幀聚合的物件列表。"""
+        if self.video_analysis is None:
+            return
+        
+        # 按平均分數排序
+        sorted_objects = sorted(
+            self.video_analysis.object_summaries.values(),
+            key=lambda x: x.avg_score,
+            reverse=True
+        )
+        
+        for obj_summary in sorted_objects:
+            category = self.analyzer.categorize(obj_summary.avg_score)
+            
+            # 建立列表項目
+            item = QListWidgetItem()
+            item_widget = ObjectListItem(
+                obj_summary.obj_id,
+                obj_summary.avg_score,
+                category,
+                frame_idx=None  # Video 模式不傳 frame_idx
+            )
+            item_widget.status_changed.connect(self.on_object_status_changed)
+            
+            # 設置 property
+            item_widget.setProperty("obj_id", obj_summary.obj_id)
+            
+            item.setSizeHint(item_widget.sizeHint())
+            self.object_list.addItem(item)
+            self.object_list.setItemWidget(item, item_widget)
+            
+            # 初始化狀態（如果尚未設定）
+            if obj_summary.obj_id not in self.object_status:
+                self.object_status[obj_summary.obj_id] = "pending"
+    
+    def _update_object_list_independent(self):
+        """Independent 模式：顯示所有幀的所有物件。"""
+        if not self.sam3_results:
+            return
+        
+        # 收集所有幀的所有物件
+        all_detections = []  # [(frame_idx, obj_id, score), ...]
+        
+        for frame_idx, frame_result in self.sam3_results.items():
+            for det in frame_result.detections:
+                all_detections.append((frame_idx, det.obj_id, det.score))
+        
+        # 按幀索引排序，然後按分數排序
+        all_detections.sort(key=lambda x: (x[0], -x[2]))
+        
+        for frame_idx, obj_id, score in all_detections:
+            category = self.analyzer.categorize(score)
+            composite_key = f"F{frame_idx}_{obj_id}"
+            
+            # 建立列表項目
+            item = QListWidgetItem()
+            item_widget = ObjectListItem(
+                obj_id,
+                score,
+                category,
+                frame_idx=frame_idx  # 傳遞幀索引
+            )
+            item_widget.status_changed.connect(self.on_object_status_changed)
+            
+            # 設置 property
+            item_widget.setProperty("obj_id", obj_id)
+            item_widget.setProperty("frame_idx", frame_idx)
+            item_widget.setProperty("composite_key", composite_key)
+            
+            item.setSizeHint(item_widget.sizeHint())
+            self.object_list.addItem(item)
+            self.object_list.setItemWidget(item, item_widget)
+            
+            # 初始化狀態（如果尚未設定）
+            if composite_key not in self.object_status:
+                self.object_status[composite_key] = "pending"
     
     def update_analysis_display(self):
         """更新分析結果顯示。"""
@@ -3253,39 +3272,59 @@ class HILAAMainWindow(QMainWindow):
         )
         self.analysis_label.setText(text)
     
-    def on_object_status_changed(self, obj_id: int, status: str):
+    def on_object_status_changed(self, obj_id: int, status: str, frame_idx: object = None):
         """物件狀態改變。"""
-        self.object_status[obj_id] = status
+        # 判斷是否為 Independent 模式
+        is_independent_mode = (self.processing_mode_combo.currentIndex() == 1)
+        
+        if is_independent_mode and frame_idx is not None:
+            # Independent 模式：使用複合 key
+            key = f"F{frame_idx}_{obj_id}"
+        else:
+            # Video 模式：使用 obj_id
+            key = obj_id
+        
+        self.object_status[key] = status
         
         # === ActionLogger: 記錄審核操作 ===
+        log_frame = frame_idx if frame_idx is not None else self.current_frame
         if status == "accepted":
             self.action_logger.log_approve_object(
-                frame_idx=self.current_frame,
+                frame_idx=log_frame,
                 obj_id=obj_id
             )
         elif status == "rejected":
             self.action_logger.log_reject_object(
-                frame_idx=self.current_frame,
+                frame_idx=log_frame,
                 obj_id=obj_id
             )
         
         self.display_frame(self.current_frame)  # 重新顯示以更新視覺化
     
-    def accept_all_high(self):
-        """接受所有 HIGH 信心物件。"""
+    def accept_all(self):
+        """接受所有尚未審核的物件（pending 狀態）。"""
         for i in range(self.object_list.count()):
             item = self.object_list.item(i)
             widget = self.object_list.itemWidget(item)
-            if widget.category == ConfidenceCategory.HIGH:
+            if widget and widget.status == "pending":  # 只接受 pending 的
                 widget.accept()
     
     def reset_all_objects(self):
         """重設所有物件狀態。"""
+        is_independent_mode = (self.processing_mode_combo.currentIndex() == 1)
+        
         for i in range(self.object_list.count()):
             item = self.object_list.item(i)
             widget = self.object_list.itemWidget(item)
-            widget.reset()
-            self.object_status[widget.obj_id] = "pending"
+            if widget:
+                widget.reset()
+                
+                # 根據模式使用正確的 key
+                if is_independent_mode and widget.frame_idx is not None:
+                    key = f"F{widget.frame_idx}_{widget.obj_id}"
+                else:
+                    key = widget.obj_id
+                self.object_status[key] = "pending"
         
         self.display_frame(self.current_frame)
     
@@ -4214,7 +4253,7 @@ class HILAAMainWindow(QMainWindow):
         self.play_btn.setEnabled(enabled and self.video_loader is not None)
         self.timeline_slider.setEnabled(enabled and self.video_loader is not None)
         self.detect_btn.setEnabled(enabled and self.video_loader is not None)
-        self.accept_all_high_btn.setEnabled(enabled and len(self.sam3_results) > 0)
+        self.accept_all_btn.setEnabled(enabled and len(self.sam3_results) > 0)
         self.reset_all_btn.setEnabled(enabled and len(self.sam3_results) > 0)
         self.refine_btn.setEnabled(enabled and len(self.object_list.selectedItems()) > 0)
         # Add Object 按鈕在有影片時就可以用
