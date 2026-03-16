@@ -257,6 +257,67 @@ class FrameExtractor:
         return frame_to_filename
 
 
+class ImageFolderExtractor:
+    """
+    Copy images from a folder (for Independent Images mode).
+    
+    Unlike FrameExtractor which extracts frames from video,
+    this class copies existing images from a source folder.
+    """
+    
+    def __init__(self, folder_path: str):
+        self.folder_path = Path(folder_path)
+        
+        # Supported image extensions
+        self.extensions = {'.jpg', '.jpeg', '.png', '.bmp', '.tiff', '.tif', '.webp'}
+    
+    def extract_frames(
+        self, 
+        frame_indices: List[int],
+        output_dir: Path,
+        prefix: str = "frame"
+    ) -> Dict[int, str]:
+        """
+        Copy images from source folder to output directory.
+        
+        Args:
+            frame_indices: List of frame indices to copy
+            output_dir: Destination directory
+            prefix: Filename prefix (used for renamed files)
+            
+        Returns:
+            Dict mapping frame_idx -> image filename
+        """
+        output_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Get sorted list of images in source folder
+        image_files = sorted([
+            f for f in self.folder_path.iterdir()
+            if f.is_file() and f.suffix.lower() in self.extensions
+        ])
+        
+        if not image_files:
+            raise RuntimeError(f"No images found in folder: {self.folder_path}")
+        
+        frame_to_filename = {}
+        frame_set = set(frame_indices)
+        
+        for frame_idx, src_path in enumerate(image_files):
+            if frame_idx not in frame_set:
+                continue
+            
+            # Keep original filename for clarity
+            filename = src_path.name
+            dst_path = output_dir / filename
+            
+            # Copy image to output directory
+            shutil.copy2(src_path, dst_path)
+            frame_to_filename[frame_idx] = filename
+        
+        logger.info(f"Copied {len(frame_to_filename)} images to {output_dir}")
+        return frame_to_filename
+
+
 # =============================================================================
 # Dataset Splitter
 # =============================================================================
@@ -702,18 +763,27 @@ class AnnotationExporter:
             filtered_indices = all_frame_indices
             filtered_results = results
         
-        # Step 1: Extract frames to json_image directory (used by all formats)
-        logger.info("Step 1: Extracting frames from video...")
-        
+        # Step 1: Extract/copy frames to json_image directory (used by all formats)
         if self.config.video_path:
-            extractor = FrameExtractor(self.config.video_path)
+            video_path = Path(self.config.video_path)
+            
+            if video_path.is_dir():
+                # Images mode: copy images from folder
+                logger.info("Step 1: Copying images from folder...")
+                extractor = ImageFolderExtractor(self.config.video_path)
+            else:
+                # Video mode: extract frames from video
+                logger.info("Step 1: Extracting frames from video...")
+                extractor = FrameExtractor(self.config.video_path)
+            
             frame_to_filename = extractor.extract_frames(
                 filtered_indices, 
                 json_image_dir,
                 prefix="frame"
             )
         else:
-            # Mock filenames if no video
+            # Mock filenames if no video/folder path
+            logger.info("Step 1: Creating mock filenames (no source provided)...")
             json_image_dir.mkdir(parents=True, exist_ok=True)
             frame_to_filename = {idx: f"frame_{idx:06d}.jpg" for idx in filtered_indices}
         
