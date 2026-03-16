@@ -1566,12 +1566,14 @@ class HILAAMainWindow(QMainWindow):
         delete_action = menu.addAction("🗑️ Delete Object (All Frames)")
         delete_action.triggered.connect(lambda: self.delete_object(obj_id))
         
-        # Independent 模式下只刪除當前幀，Video 模式下刪除當前幀及之後
-        if is_independent_mode:
-            delete_from_action = menu.addAction("🗑️ Delete This Detection")
-        else:
-            delete_from_action = menu.addAction("🗑️ Delete From Current Frame")
-        delete_from_action.triggered.connect(lambda: self.delete_object_from_frame(obj_id, self.current_frame))
+        # 只刪除當前幀（兩種模式都有）
+        delete_this_action = menu.addAction("🗑️ Delete This Detection Only")
+        delete_this_action.triggered.connect(lambda: self.delete_object_single_frame(obj_id, self.current_frame))
+        
+        # Video 模式額外提供「從當前幀刪到最後」
+        if not is_independent_mode:
+            delete_from_action = menu.addAction("🗑️ Delete From Current Frame Onwards")
+            delete_from_action.triggered.connect(lambda: self.delete_object_from_frame(obj_id, self.current_frame))
         
         menu.addSeparator()
         
@@ -1645,93 +1647,48 @@ class HILAAMainWindow(QMainWindow):
     
     def delete_object_from_frame(self, obj_id: int, from_frame: int):
         """
-        刪除物件。
-        
-        - Video 模式：從指定幀開始刪除（保留之前的幀）
-        - Independent Images 模式：只刪除當前幀的該物件
+        從指定幀開始刪除物件（保留之前的幀）。
         
         Args:
             obj_id: 要刪除的物件 ID
-            from_frame: 從此幀開始刪除（Independent 模式下只刪這一幀）
+            from_frame: 從此幀開始刪除
         """
         if self.video_loader is None:
             return
         
         total_frames = self.video_loader.metadata.total_frames
         
-        # 判斷是否為 Independent Images 模式
-        is_independent_mode = (self.processing_mode_combo.currentIndex() == 1)
+        # 確認操作
+        reply = QMessageBox.question(
+            self, "Confirm Delete",
+            f"Delete Object {obj_id} from frame {from_frame} to {total_frames - 1}?\n\n"
+            f"Frames 0 to {from_frame - 1} will be preserved.\n"
+            "This action cannot be undone.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
         
-        if is_independent_mode:
-            # === Independent 模式：只刪除當前幀 ===
-            reply = QMessageBox.question(
-                self, "Confirm Delete",
-                f"Delete Object {obj_id} from frame {from_frame} only?\n\n"
-                "This action cannot be undone.",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
-            )
-            
-            if reply != QMessageBox.StandardButton.Yes:
-                return
-            
-            # 只刪除當前幀
-            deleted_count = 0
-            if from_frame in self.sam3_results:
-                frame_result = self.sam3_results[from_frame]
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+        
+        # 從指定幀開始移除
+        deleted_count = 0
+        for frame_idx in range(from_frame, total_frames):
+            if frame_idx in self.sam3_results:
+                frame_result = self.sam3_results[frame_idx]
                 original_count = len(frame_result.detections)
                 frame_result.detections = [
                     d for d in frame_result.detections if d.obj_id != obj_id
                 ]
-                deleted_count = original_count - len(frame_result.detections)
-            
-            # === ActionLogger: 記錄刪除物件 ===
-            self.action_logger.log_delete_object(
-                frame_idx=from_frame,
-                obj_id=obj_id,
-                delete_type="single_frame"
-            )
-            
-            logger.info(f"Deleted object {obj_id} from frame {from_frame} only: removed {deleted_count} detections")
-            
-            self.statusBar().showMessage(
-                f"Deleted Object {obj_id} from frame {from_frame} ({deleted_count} detection removed)"
-            )
-        else:
-            # === Video 模式：從指定幀開始刪除 ===
-            reply = QMessageBox.question(
-                self, "Confirm Delete",
-                f"Delete Object {obj_id} from frame {from_frame} to {total_frames - 1}?\n\n"
-                f"Frames 0 to {from_frame - 1} will be preserved.\n"
-                "This action cannot be undone.",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
-            )
-            
-            if reply != QMessageBox.StandardButton.Yes:
-                return
-            
-            # 從指定幀開始移除
-            deleted_count = 0
-            for frame_idx in range(from_frame, total_frames):
-                if frame_idx in self.sam3_results:
-                    frame_result = self.sam3_results[frame_idx]
-                    original_count = len(frame_result.detections)
-                    frame_result.detections = [
-                        d for d in frame_result.detections if d.obj_id != obj_id
-                    ]
-                    deleted_count += original_count - len(frame_result.detections)
-            
-            # === ActionLogger: 記錄刪除物件（從當前幀開始）===
-            self.action_logger.log_delete_object(
-                frame_idx=from_frame,
-                obj_id=obj_id,
-                delete_type="from_current"
-            )
-            
-            logger.info(f"Deleted object {obj_id} from frame {from_frame}: removed {deleted_count} detections")
-            
-            self.statusBar().showMessage(
-                f"Deleted Object {obj_id} from frame {from_frame} onwards ({deleted_count} detections removed)"
-            )
+                deleted_count += original_count - len(frame_result.detections)
+        
+        # === ActionLogger: 記錄刪除物件 ===
+        self.action_logger.log_delete_object(
+            frame_idx=from_frame,
+            obj_id=obj_id,
+            delete_type="from_current"
+        )
+        
+        logger.info(f"Deleted object {obj_id} from frame {from_frame}: removed {deleted_count} detections")
         
         # 更新 UI
         self._reanalyze_with_preserved_edits()
@@ -1740,6 +1697,64 @@ class HILAAMainWindow(QMainWindow):
         self.update_analysis_display()
         self.update_timeline()
         self.display_frame(self.current_frame)
+        
+        self.statusBar().showMessage(
+            f"Deleted Object {obj_id} from frame {from_frame} onwards ({deleted_count} detections removed)"
+        )
+    
+    def delete_object_single_frame(self, obj_id: int, frame_idx: int):
+        """
+        只刪除指定幀中的該物件（不影響其他幀）。
+        
+        Args:
+            obj_id: 要刪除的物件 ID
+            frame_idx: 要刪除的幀索引
+        """
+        if self.video_loader is None:
+            return
+        
+        # 確認操作
+        reply = QMessageBox.question(
+            self, "Confirm Delete",
+            f"Delete Object {obj_id} from frame {frame_idx} only?\n\n"
+            "Other frames will not be affected.\n"
+            "This action cannot be undone.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
+        
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+        
+        # 只刪除指定幀
+        deleted_count = 0
+        if frame_idx in self.sam3_results:
+            frame_result = self.sam3_results[frame_idx]
+            original_count = len(frame_result.detections)
+            frame_result.detections = [
+                d for d in frame_result.detections if d.obj_id != obj_id
+            ]
+            deleted_count = original_count - len(frame_result.detections)
+        
+        # === ActionLogger: 記錄刪除物件 ===
+        self.action_logger.log_delete_object(
+            frame_idx=frame_idx,
+            obj_id=obj_id,
+            delete_type="single_frame"
+        )
+        
+        logger.info(f"Deleted object {obj_id} from frame {frame_idx} only: removed {deleted_count} detection(s)")
+        
+        # 更新 UI
+        self._reanalyze_with_preserved_edits()
+        self._track_human_intervention(frame_idx)
+        self.update_object_list()
+        self.update_analysis_display()
+        self.update_timeline()
+        self.display_frame(self.current_frame)
+        
+        self.statusBar().showMessage(
+            f"Deleted Object {obj_id} from frame {frame_idx} ({deleted_count} detection removed)"
+        )
     
     def show_merge_dialog(self, source_obj_id: int):
         """
