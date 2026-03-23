@@ -112,38 +112,7 @@ def main(
     # Launch GUI
     try:
         from PyQt6.QtWidgets import QApplication
-        
-        # Check if GUI modules exist
-        try:
-            from src.gui.main_window_with_action_logger import MainWindow
-        except ImportError:
-            logger.warning("GUI modules not yet implemented. Creating placeholder...")
-            
-            # Placeholder until GUI is built
-            from PyQt6.QtWidgets import QMainWindow, QLabel, QVBoxLayout, QWidget
-            from PyQt6.QtCore import Qt
-            
-            class MainWindow(QMainWindow):
-                def __init__(self):
-                    super().__init__()
-                    self.setWindowTitle(config.gui.window_title)
-                    self.setGeometry(100, 100, config.gui.window_width, config.gui.window_height)
-                    
-                    central = QWidget()
-                    layout = QVBoxLayout(central)
-                    
-                    label = QLabel(
-                        "🚢 HIL-AA Maritime Annotation System\n\n"
-                        f"Version: {__version__}\n"
-                        f"Mode: {'MOCK' if config.sam3.mock_mode else 'PRODUCTION'}\n\n"
-                        "GUI modules coming in Week 3!\n\n"
-                        "Press Ctrl+Q to quit."
-                    )
-                    label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-                    label.setStyleSheet("font-size: 18px; padding: 50px;")
-                    layout.addWidget(label)
-                    
-                    self.setCentralWidget(central)
+        from src.gui import MainWindow
         
         # Create and run application
         qt_app = QApplication(sys.argv)
@@ -162,8 +131,8 @@ def main(
         sys.exit(qt_app.exec())
         
     except ImportError as e:
-        logger.error(f"Failed to import PyQt6: {e}")
-        logger.error("Please ensure PyQt6 is installed: pip install PyQt6")
+        logger.error(f"Failed to import required module: {e}")
+        logger.error("Please ensure all dependencies are installed")
         raise typer.Exit(1)
     except Exception as e:
         logger.exception(f"Application error: {e}")
