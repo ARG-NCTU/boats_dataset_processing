@@ -1150,7 +1150,7 @@ class HILAAMainWindow(QMainWindow):
         # 預設使用臨時目錄，open_video 時會重新設定為影片所在目錄的 logs 子目錄
         self.action_logger = ActionLogger(
             output_dir=tempfile.gettempdir(),
-            format="jsonl",
+            format="mcap",
             auto_flush=True
         )
         self._detection_start_time: Optional[float] = None  # 用於計算偵測時間
@@ -2243,7 +2243,7 @@ class HILAAMainWindow(QMainWindow):
             logs_dir = video_dir / "logs"
             self.action_logger = ActionLogger(
                 output_dir=str(logs_dir),
-                format="jsonl",
+                format="mcap",
                 auto_flush=True
             )
             
@@ -2328,7 +2328,7 @@ class HILAAMainWindow(QMainWindow):
             logs_dir = Path(folder_path) / "logs"
             self.action_logger = ActionLogger(
                 output_dir=str(logs_dir),
-                format="jsonl",
+                format="mcap",
                 auto_flush=True
             )
             
