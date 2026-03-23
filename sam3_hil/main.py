@@ -58,7 +58,7 @@ def setup_logging() -> None:
         )
 
 
-@app.command(invoke_without_command=True)
+@app.callback(invoke_without_command=True)
 def main(
     mock: bool = typer.Option(
         False,
