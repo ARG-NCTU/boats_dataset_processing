@@ -115,7 +115,7 @@ def main(
         
         # Check if GUI modules exist
         try:
-            from src.gui.main_window import MainWindow
+            from src.gui.main_window_with_action_logger import MainWindow
         except ImportError:
             logger.warning("GUI modules not yet implemented. Creating placeholder...")
             
