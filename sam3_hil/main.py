@@ -11,7 +11,6 @@ Usage:
     python main.py --config     # Print configuration
     python main.py --version    # Print version
 
-Author: Sonic @ NYCU Maritime Robotics Lab
 """
 
 import sys
@@ -60,7 +59,6 @@ def setup_logging() -> None:
 
 @app.callback(invoke_without_command=True)
 def main(
-    ctx: typer.Context,
     mock: bool = typer.Option(
         False,
         "--mock", "-m",
@@ -84,6 +82,9 @@ def main(
 ) -> None:
     """
     Launch the HIL-AA Maritime Annotation System.
+    
+    This system uses SAM 3's semantic confidence scores to minimize
+    human annotation effort through intelligent active learning.
     """
     # Handle simple flags
     if version:
@@ -93,10 +94,6 @@ def main(
     if show_config:
         print_config()
         raise typer.Exit()
-    
-    # If a subcommand is invoked, don't run GUI
-    if ctx.invoked_subcommand is not None:
-        return
     
     # Setup
     setup_logging()
@@ -116,12 +113,14 @@ def main(
         from PyQt6.QtWidgets import QApplication
         from src.gui import MainWindow
         
+        # Create and run application
         qt_app = QApplication(sys.argv)
         qt_app.setApplicationName("HIL-AA")
         qt_app.setApplicationVersion(__version__)
         
         window = MainWindow()
         
+        # Open video if specified
         if video and hasattr(window, 'open_video'):
             window.open_video(video)
         
@@ -132,6 +131,7 @@ def main(
         
     except ImportError as e:
         logger.error(f"Failed to import required module: {e}")
+        logger.error("Please ensure all dependencies are installed")
         raise typer.Exit(1)
     except Exception as e:
         logger.exception(f"Application error: {e}")
@@ -140,19 +140,25 @@ def main(
 
 @app.command()
 def test_x11() -> None:
-    """Test X11 display connection."""
+    """Test X11 display connection (for Docker debugging)."""
     import os
+    
     display = os.environ.get("DISPLAY", "not set")
     typer.echo(f"DISPLAY={display}")
     
     try:
         from PyQt6.QtWidgets import QApplication, QMessageBox
-        qapp = QApplication(sys.argv)
+        
+        app = QApplication(sys.argv)
+        
         msg = QMessageBox()
         msg.setWindowTitle("X11 Test")
-        msg.setText("✅ X11 connection successful!")
+        msg.setText("✅ X11 connection successful!\n\nPyQt6 can display windows.")
+        msg.setIcon(QMessageBox.Icon.Information)
         msg.exec()
+        
         typer.echo("✅ X11 test passed!")
+        
     except Exception as e:
         typer.echo(f"❌ X11 test failed: {e}", err=True)
         raise typer.Exit(1)
@@ -163,15 +169,19 @@ def test_gpu() -> None:
     """Test CUDA/GPU availability."""
     try:
         import torch
+        
         typer.echo(f"PyTorch version: {torch.__version__}")
         typer.echo(f"CUDA available: {torch.cuda.is_available()}")
+        
         if torch.cuda.is_available():
             typer.echo(f"CUDA version: {torch.version.cuda}")
+            typer.echo(f"GPU count: {torch.cuda.device_count()}")
             for i in range(torch.cuda.device_count()):
                 typer.echo(f"  GPU {i}: {torch.cuda.get_device_name(i)}")
             typer.echo("✅ GPU test passed!")
         else:
             typer.echo("⚠️ Running in CPU mode")
+            
     except Exception as e:
         typer.echo(f"❌ GPU test failed: {e}", err=True)
         raise typer.Exit(1)
