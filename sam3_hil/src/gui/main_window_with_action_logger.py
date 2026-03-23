@@ -1309,7 +1309,7 @@ class HILAAMainWindow(QMainWindow):
         prompt_layout = QHBoxLayout()
         prompt_layout.addWidget(QLabel("Prompt:"))
         from PyQt6.QtWidgets import QLineEdit
-        self.prompt_input = QLineEdit("boat, ship")
+        self.prompt_input = QLineEdit("")
         prompt_layout.addWidget(self.prompt_input)
         settings_layout.addLayout(prompt_layout)
         
@@ -1469,7 +1469,7 @@ class HILAAMainWindow(QMainWindow):
         objects_layout.addWidget(self.object_list)
         
         # 物件管理提示
-        manage_hint = QLabel("💡 Right-click on object for more options")
+        manage_hint = QLabel("Right-click on object for more options")
         manage_hint.setStyleSheet("color: #888; font-size: 10px;")
         objects_layout.addWidget(manage_hint)
         
@@ -1569,34 +1569,34 @@ class HILAAMainWindow(QMainWindow):
         is_independent_mode = (self.processing_mode_combo.currentIndex() == 1)
         
         # 刪除物件
-        delete_action = menu.addAction("🗑️ Delete Object (All Frames)")
+        delete_action = menu.addAction("Delete Object (All Frames)")
         delete_action.triggered.connect(lambda: self.delete_object(obj_id))
         
         # 只刪除當前幀（兩種模式都有）
-        delete_this_action = menu.addAction("🗑️ Delete This Detection Only")
+        delete_this_action = menu.addAction("Delete This Detection Only")
         # Independent 模式用物件所在的幀，Video 模式用當前顯示的幀
         target_frame = frame_idx if frame_idx is not None else self.current_frame
         delete_this_action.triggered.connect(lambda: self.delete_object_single_frame(obj_id, target_frame))
         
         # Video 模式額外提供「從當前幀刪到最後」
         if not is_independent_mode:
-            delete_from_action = menu.addAction("🗑️ Delete From Current Frame Onwards")
+            delete_from_action = menu.addAction("Delete From Current Frame Onwards")
             delete_from_action.triggered.connect(lambda: self.delete_object_from_frame(obj_id, self.current_frame))
         
         menu.addSeparator()
         
         # 合併物件
-        merge_action = menu.addAction("🔗 Merge Into Another Object...")
+        merge_action = menu.addAction("Merge Into Another Object...")
         merge_action.triggered.connect(lambda: self.show_merge_dialog(obj_id))
         
         # 交換標籤
-        swap_action = menu.addAction("🔄 Swap Label With...")
+        swap_action = menu.addAction("Swap Label With...")
         swap_action.triggered.connect(lambda: self.show_swap_dialog(obj_id))
         
         menu.addSeparator()
         
         # 跳轉到物件首次出現的幀
-        jump_action = menu.addAction("📍 Jump to First Appearance")
+        jump_action = menu.addAction("Jump to First Appearance")
         jump_action.triggered.connect(lambda: self.jump_to_object_first_frame(obj_id))
         
         # 顯示選單
@@ -2751,11 +2751,11 @@ class HILAAMainWindow(QMainWindow):
             estimated_time = total_frames * 0.1  # 估算：每幀約 0.1 秒
             
             msg = (
-                f"✅ Initial Detection Complete!\n\n"
+                f"Initial Detection Complete!\n\n"
                 f"Objects found: {num_objects}\n"
                 f"Total frames: {total_frames}\n"
                 f"Estimated time: ~{estimated_time:.0f} seconds\n\n"
-                f"⚠️ Warning: Once propagation starts, it cannot be interrupted.\n\n"
+                f"Warning: Once propagation starts, it cannot be interrupted.\n\n"
                 f"Do you want to continue with propagation?"
             )
         
