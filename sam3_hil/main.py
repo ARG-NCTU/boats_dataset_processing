@@ -59,6 +59,7 @@ def setup_logging() -> None:
 
 @app.callback(invoke_without_command=True)
 def main(
+    ctx: typer.Context,
     mock: bool = typer.Option(
         False,
         "--mock", "-m",
@@ -82,9 +83,6 @@ def main(
 ) -> None:
     """
     Launch the STAMP Annotation System.
-    
-    This system uses SAM 3's semantic confidence scores to minimize
-    human annotation effort through intelligent active learning.
     """
     # Handle simple flags
     if version:
@@ -94,6 +92,10 @@ def main(
     if show_config:
         print_config()
         raise typer.Exit()
+    
+    # If a subcommand is invoked, don't run GUI
+    if ctx.invoked_subcommand is not None:
+        return
     
     # Setup
     setup_logging()
@@ -113,14 +115,12 @@ def main(
         from PyQt6.QtWidgets import QApplication
         from src.gui import MainWindow
         
-        # Create and run application
         qt_app = QApplication(sys.argv)
         qt_app.setApplicationName("STAMP")
         qt_app.setApplicationVersion(__version__)
         
         window = MainWindow()
         
-        # Open video if specified
         if video and hasattr(window, 'open_video'):
             window.open_video(video)
         
@@ -131,7 +131,6 @@ def main(
         
     except ImportError as e:
         logger.error(f"Failed to import required module: {e}")
-        logger.error("Please ensure all dependencies are installed")
         raise typer.Exit(1)
     except Exception as e:
         logger.exception(f"Application error: {e}")
