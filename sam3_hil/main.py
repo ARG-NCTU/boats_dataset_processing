@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-HIL-AA Maritime Annotation System
+STAMP Annotation System
 =================================
 
 Main entry point for the application.
@@ -26,8 +26,8 @@ from src import __version__, ensure_directories
 from src.config import config, print_config
 
 app = typer.Typer(
-    name="hil-aa",
-    help="HIL-AA Maritime Annotation System",
+    name="stamp",
+    help="STAMP Annotation System",
     add_completion=False,
 )
 
@@ -50,7 +50,7 @@ def setup_logging() -> None:
     if log_config.log_to_file:
         log_config.log_dir.mkdir(parents=True, exist_ok=True)
         logger.add(
-            log_config.log_dir / "hil_aa_{time:YYYY-MM-DD}.log",
+            log_config.log_dir / "stamp_{time:YYYY-MM-DD}.log",
             level="DEBUG",
             rotation="1 day",
             retention="7 days",
@@ -81,14 +81,14 @@ def main(
     ),
 ) -> None:
     """
-    Launch the HIL-AA Maritime Annotation System.
+    Launch the STAMP Annotation System.
     
     This system uses SAM 3's semantic confidence scores to minimize
     human annotation effort through intelligent active learning.
     """
     # Handle simple flags
     if version:
-        typer.echo(f"HIL-AA Maritime Annotation System v{__version__}")
+        typer.echo(f"STAMP Annotation System v{__version__}")
         raise typer.Exit()
     
     if show_config:
@@ -104,7 +104,7 @@ def main(
         config.sam3.mock_mode = True
         logger.info("Running in MOCK mode (no real SAM 3 inference)")
     
-    logger.info(f"Starting HIL-AA v{__version__}")
+    logger.info(f"Starting STAMP v{__version__}")
     logger.info(f"Device: {config.sam3.device}")
     logger.info(f"Mock mode: {config.sam3.mock_mode}")
     
@@ -115,7 +115,7 @@ def main(
         
         # Create and run application
         qt_app = QApplication(sys.argv)
-        qt_app.setApplicationName("HIL-AA")
+        qt_app.setApplicationName("STAMP")
         qt_app.setApplicationVersion(__version__)
         
         window = MainWindow()
