@@ -2743,9 +2743,8 @@ class HILAAMainWindow(QMainWindow):
         # 準備確認訊息
         if num_objects == 0:
             msg = (
-                f"No objects detected with prompt: '{self.prompt_input.text()}'\n\n"
-                f"Do you want to continue anyway?\n"
-                f"(Propagation may still find objects in later frames)"
+                f"Detect with prompt: '{self.prompt_input.text()}'\n"
+                f"Do you want to continue anyway?"
             )
         else:
             total_frames = self.video_loader.metadata.total_frames
@@ -4123,9 +4122,7 @@ class HILAAMainWindow(QMainWindow):
             
             # === ActionLogger: 記錄傳播操作 ===
             end_frame = total_frames - 1
-            if self.add_object_mode:
-                # 新增物件 + 傳播
-                self.action_logger.log_add_object(frame_idx=start_frame, obj_id=obj_id)
+            
             self.action_logger.log_propagate(
                 start_frame=start_frame,
                 end_frame=end_frame,
