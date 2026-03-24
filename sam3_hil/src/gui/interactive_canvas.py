@@ -595,3 +595,7 @@ class RefinementControlPanel(QFrame):
     def exit_refinement(self):
         """Hide the panel."""
         self.hide()
+
+    def set_propagate_visible(self, visible: bool):
+        """Show or hide the propagate button (for Images mode)."""
+        self.propagate_btn.setVisible(visible)
