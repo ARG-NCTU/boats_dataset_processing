@@ -1,15 +1,15 @@
 """
-HIL-AA Maritime Annotation System
+STAMP Annotation System
 =================================
 
 Efficiency-Driven Semi-Automated Data Engine:
-Leveraging SAM 3 Presence Confidence for Maritime Video Annotation
+Leveraging SAM 3 Presence Confidence for Video Annotation
 
-Author: Sonic @ NYCU Maritime Robotics Lab
+Author: Adam Shih @ NYCU ARG Lab
 """
 
 __version__ = "0.1.0"
-__author__ = "Adam"
+__author__ = "Adam Shih @ NYCU ARG Lab"
 
 from .config import config, ensure_directories
 
