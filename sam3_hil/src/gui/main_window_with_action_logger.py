@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-HIL-AA Annotation GUI - Main Window
+STAMP Annotation GUI - Main Window
 ===================================
 
 Maritime Video Annotation Tool using SAM3 with confidence-based
@@ -14,7 +14,7 @@ Main Components:
 - Interactive Refinement: Point-based mask editing
 - Object Management: Delete, merge, swap labels (NEW)
 
-Author: Adam (Assistive Robotics Lab, NYCU)
+Author: Adam (ARG LAB, NYCU)
 """
 
 import sys
@@ -925,7 +925,7 @@ class ExportDialog(QDialog):
         self.rejected_checkbox.setChecked(False)
         options_layout.addWidget(self.rejected_checkbox)
         
-        self.hil_fields_checkbox = QCheckBox("Include HIL-AA fields in COCO")
+        self.hil_fields_checkbox = QCheckBox("Include STAMP fields in COCO")
         self.hil_fields_checkbox.setChecked(True)
         options_layout.addWidget(self.hil_fields_checkbox)
         
@@ -1105,7 +1105,7 @@ class ExportDialog(QDialog):
 
 class HILAAMainWindow(QMainWindow):
     """
-    HIL-AA 標註工具主視窗。
+    STAMP 標註工具主視窗。
     
     功能：
     1. 載入影片
@@ -1169,7 +1169,7 @@ class HILAAMainWindow(QMainWindow):
         self.play_timer = QTimer()
         self.play_timer.timeout.connect(self.next_frame)
         
-        self.setWindowTitle("HIL-AA Maritime Annotation Tool")
+        self.setWindowTitle("STAMP")
         self.setGeometry(100, 50, 1400, 900)
         
         self.statusBar().showMessage("Ready - Please open a video file")
@@ -1569,8 +1569,9 @@ class HILAAMainWindow(QMainWindow):
         is_independent_mode = (self.processing_mode_combo.currentIndex() == 1)
         
         # 刪除物件
-        delete_action = menu.addAction("Delete Object (All Frames)")
-        delete_action.triggered.connect(lambda: self.delete_object(obj_id))
+        if not is_independent_mode:
+            delete_action = menu.addAction("Delete Object (All Frames)")
+            delete_action.triggered.connect(lambda: self.delete_object(obj_id))
         
         # 只刪除當前幀（兩種模式都有）
         delete_this_action = menu.addAction("Delete This Detection Only")
@@ -3249,25 +3250,17 @@ class HILAAMainWindow(QMainWindow):
         
         va = self.video_analysis
         
-        # 計算實際 HIR
-        edited_frames = len(va.frames_actually_edited) if va.frames_actually_edited else 0
-        actual_hir = edited_frames / va.total_frames * 100 if va.total_frames > 0 else 0
-        
-        # Jitter 資訊（如果有）
         jitter_info = ""
         if hasattr(self, 'jitter_analysis') and self.jitter_analysis:
             ja = self.jitter_analysis
-            jitter_info = f"\n\nStability: {ja.overall_stability:.1%}\nJitter Frames: {ja.jitter_frame_count}"
+            jitter_info = f"\nStability: {ja.overall_stability:.1%}\nJitter Frames: {ja.jitter_frame_count}"
         
         text = (
             f"Unique Objects: {va.unique_objects}\n"
             f"Total Detections: {va.total_objects}\n\n"
             f"HIGH: {va.high_count} ({va.auto_accept_rate:.1f}%)\n"
             f"UNCERTAIN: {va.uncertain_count}\n"
-            f"LOW: {va.low_count}\n\n"
-            f"Potential Review: {va.frames_need_review} frames\n"
-            f"Actually Edited: {edited_frames} frames\n"
-            f"Actual HIR: {actual_hir:.1f}%"
+            f"LOW: {va.low_count}"
             f"{jitter_info}"
         )
         self.analysis_label.setText(text)
@@ -3568,17 +3561,12 @@ class HILAAMainWindow(QMainWindow):
         """顯示關於對話框。"""
         QMessageBox.about(
             self,
-            "About HIL-AA",
-            "HIL-AA Maritime Annotation Tool\n\n"
+            "About STAMP",
+            "STAMP Maritime Annotation Tool\n\n"
             "Human-in-the-Loop Active Annotation\n"
             "for Maritime Video using SAM3\n\n"
-            "Author: Sonic\n"
-            "Assistive Robotics Group, NYCU\n\n"
-            "Key Innovation:\n"
-            "Use SAM3 confidence scores to minimize\n"
-            "human annotation effort by 5-10x\n\n"
-            "NEW: Object Management\n"
-            "Right-click objects to delete, merge, or swap labels"
+            "Author: Adam Shih\n"
+            "Assistive Robotics Group, NYCU"
         )
     
     # =========================================================================
@@ -3735,6 +3723,9 @@ class HILAAMainWindow(QMainWindow):
         # 顯示控制面板
         score = target_det.score
         self.refinement_panel.enter_refinement(obj_id, score)
+        # 檢查是否為 Independent Images 模式
+        is_independent_mode = (self.processing_mode_combo.currentIndex() == 1)
+        self.refinement_panel.set_propagate_visible(not is_independent_mode)
         
         # 禁用其他控制
         self._set_controls_enabled(False)
@@ -3778,6 +3769,9 @@ class HILAAMainWindow(QMainWindow):
         
         # 顯示控制面板（add object 模式）
         self.refinement_panel.enter_add_object()
+        # 檢查是否為 Independent Images 模式
+        is_independent_mode = (self.processing_mode_combo.currentIndex() == 1)
+        self.refinement_panel.set_propagate_visible(not is_independent_mode)
         
         # 禁用其他控制
         self._set_controls_enabled(False)
