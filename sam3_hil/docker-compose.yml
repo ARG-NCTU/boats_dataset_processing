@@ -1,0 +1,54 @@
+# STAMP Docker Compose
+# =====================
+#
+# Usage:
+#   docker compose up              # 啟動 Server
+#   docker compose up -d           # 背景執行
+#   docker compose down            # 停止
+#   docker compose logs -f         # 看 log
+#
+# 第一次執行會自動 build image
+
+services:
+  stamp-server:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.server
+    image: stamp-server:latest
+    container_name: stamp-server
+    
+    # GPU 支援
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    
+    # Port 對應
+    ports:
+      - "8000:8000"
+    
+    # 掛載資料目錄（讓 Server 能讀取影片/圖片）
+    volumes:
+      - ./data:/app/data
+      - ./models:/app/models
+      # 開發時可以掛載整個專案（熱更新）
+      # - .:/app
+    
+    # 環境變數
+    environment:
+      - PYTHONUNBUFFERED=1
+      - CUDA_VISIBLE_DEVICES=0
+    
+    # 重啟策略
+    restart: unless-stopped
+    
+    # 健康檢查
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
