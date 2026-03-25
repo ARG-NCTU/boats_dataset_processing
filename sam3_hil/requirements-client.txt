@@ -1,0 +1,21 @@
+# STAMP Client Requirements
+# =========================
+# Install: pip install -r requirements-client.txt
+#
+# 這是給 PyInstaller 打包用的，不需要 GPU 相關套件
+
+# === GUI ===
+PyQt6>=6.6.0
+
+# === HTTP Client ===
+requests>=2.31.0
+websocket-client>=1.7.0
+
+# === Core Dependencies ===
+numpy>=1.24.0
+pillow>=10.0.0
+opencv-python-headless>=4.8.0  # headless 版本，較小
+loguru>=0.7.0
+
+# === Config ===
+pydantic>=2.0.0
