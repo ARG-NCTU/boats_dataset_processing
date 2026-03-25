@@ -1,0 +1,60 @@
+# STAMP API Server Dockerfile
+# ===========================
+#
+# Build:
+#   docker build -t stamp-server -f docker/Dockerfile.server .
+#
+# Run:
+#   docker run --gpus all -p 8000:8000 stamp-server
+#
+# Run with volume (development):
+#   docker run --gpus all -p 8000:8000 -v $(pwd):/app stamp-server
+
+FROM pytorch/pytorch:2.5.1-cuda12.4-cudnn9-runtime
+
+# Set environment variables
+ENV DEBIAN_FRONTEND=noninteractive
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONDONTWRITEBYTECODE=1
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git \
+    curl \
+    libgl1-mesa-glx \
+    libglib2.0-0 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Set working directory
+WORKDIR /app
+
+# Copy requirements first (for Docker cache)
+COPY requirements.txt .
+
+# Install Python dependencies (用原本的 requirements.txt)
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Install FastAPI server dependencies (如果 requirements.txt 沒有的話)
+RUN pip install --no-cache-dir \
+    fastapi>=0.109.0 \
+    "uvicorn[standard]>=0.27.0" \
+    python-multipart>=0.0.6 \
+    websockets>=12.0
+
+# Copy project files
+COPY . .
+
+# Install SAM3 from submodule
+RUN if [ -d "third_party/sam3" ]; then \
+        pip install -e third_party/sam3; \
+    fi
+
+# Expose port
+EXPOSE 8000
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+    CMD curl -f http://localhost:8000/health || exit 1
+
+# Default command
+CMD ["python", "run_server.py", "--host", "0.0.0.0", "--port", "8000"]
