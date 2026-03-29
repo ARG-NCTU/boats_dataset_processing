@@ -131,23 +131,25 @@ async def detect(
         img = Image.open(io.BytesIO(image_bytes))
         img_array = np.array(img)
         
+        # Convert RGB to BGR if needed (SAM3 expects BGR)
+        if len(img_array.shape) == 3 and img_array.shape[2] == 3:
+            img_array = img_array[:, :, ::-1]  # RGB to BGR
+        
         logger.info(f"Detecting '{prompt}' in image {img_array.shape}")
         
-        # Run detection
-        results = engine.detect_image(img_array, prompt)
+        # Run detection - returns FrameResult object
+        frame_result = engine.detect_image(img_array, prompt)
         
-        # Convert results to response format
+        # Convert FrameResult to response format
         detections = []
-        for i, result in enumerate(results):
-            mask = result.get('mask', np.zeros((img_array.shape[0], img_array.shape[1]), dtype=bool))
-            score = result.get('score', 0.0)
-            
+        for det in frame_result.detections:
+            # det is a Detection object from sam3_engine
             detection = Detection(
-                obj_id=i,
-                mask=encode_mask_to_base64(mask),
-                score=score,
-                category=categorize_score(score, threshold_high, threshold_low),
-                bbox=get_bbox_from_mask(mask),
+                obj_id=det.obj_id,
+                mask=encode_mask_to_base64(det.mask),
+                score=det.score,
+                category=categorize_score(det.score, threshold_high, threshold_low),
+                bbox=[int(x) for x in det.box_xyxy],  # Convert to list of ints
             )
             detections.append(detection)
         
