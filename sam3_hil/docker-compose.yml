@@ -35,13 +35,19 @@ services:
       - ./data:/app/data
       - ./models:/app/models
       # 開發時可以掛載整個專案（熱更新）
-      # - .:/app
-    
+      - .:/app
+      - ~/.cache/huggingface:/root/.cache/huggingface
+
     # 環境變數
     environment:
       - PYTHONUNBUFFERED=1
       - CUDA_VISIBLE_DEVICES=0
+      - HF_TOKEN=${HF_TOKEN} 
     
+
+    command: ["python", "run_server.py", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+
+
     # 重啟策略
     restart: unless-stopped
     
