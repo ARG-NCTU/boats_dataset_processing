@@ -74,7 +74,15 @@ huggingface-hub>=0.19.0
 transformers>=4.35.0
 
 # -----------------------------------------------------------------------------
-# Maritime-Specific (optional)
+# Maritime-Specific 
 # -----------------------------------------------------------------------------
 # albumentations>=1.3.0  # Data augmentation
 # shapely>=2.0.0         # Geometry operations
+
+# -----------------------------------------------------------------------------
+# Server (FastAPI)
+# -----------------------------------------------------------------------------
+fastapi>=0.109.0
+uvicorn[standard]>=0.27.0
+python-multipart>=0.0.6
+websockets>=12.0
