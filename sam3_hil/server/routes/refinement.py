@@ -147,16 +147,21 @@ async def refine(request: RefineRequest):
         if request.current_mask:
             current_mask = decode_base64_to_mask(request.current_mask)
         
-        # Run refinement
-        result = engine.refine_mask(
+        # Convert RGB to BGR if needed (SAM3 expects BGR)
+        if len(img_array.shape) == 3 and img_array.shape[2] == 3:
+            img_array = img_array[:, :, ::-1]  # RGB to BGR
+        
+        # Run refinement - returns np.ndarray (boolean mask)
+        mask = engine.refine_mask(
             image=img_array,
             points=points,
             labels=labels,
-            mask=current_mask,
+            mask_input=current_mask,  # Note: parameter name is mask_input
         )
         
-        mask = result.get('mask', np.zeros((img_array.shape[0], img_array.shape[1]), dtype=bool))
-        score = result.get('score', 0.0)
+        # refine_mask returns mask directly (np.ndarray), not a dict
+        # Score is not returned by refine_mask, estimate based on mask validity
+        score = 1.0 if np.any(mask) else 0.0
         
         return RefineResponse(
             success=True,
