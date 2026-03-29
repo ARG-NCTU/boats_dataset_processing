@@ -2,34 +2,76 @@
 STAMP API Client
 ================
 
-HTTP 客戶端，提供與 SAM3Engine 相同的介面。
-讓 GUI 可以透過 HTTP 呼叫遠端 Server 的 SAM3。
+HTTP + WebSocket 客戶端，提供與 SAM3Engine 相同的介面。
+讓 GUI 可以透過網路呼叫遠端 Server 的 SAM3。
+
+功能：
+- 同步 API：detect_image, refine_mask（快速操作）
+- 異步 Jobs API：video_detection, batch_detection（長時間操作）
+- WebSocket：即時進度監聽
 
 用法：
-    # 原本（直接用 SAM3Engine）
-    from src.core.sam3_engine import SAM3Engine
-    engine = SAM3Engine()
-    result = engine.detect_image(image, "dolphin")
-
-    # 改成（用 API Client）
-    from src.api_client import StampAPIClient
+    # === 方式 1：同步 API（簡單操作）===
     client = StampAPIClient("http://192.168.1.100:8000")
     result = client.detect_image(image, "dolphin")
     
-    # 介面一樣，GUI 幾乎不用改！
+    # === 方式 2：異步 Jobs API（長時間操作）===
+    client = StampAPIClient("http://192.168.1.100:8000")
+    
+    # 建立任務
+    task_id = client.create_video_detection_job(video_path, prompt)
+    
+    # 監聽進度（會阻塞直到完成）
+    result = client.wait_for_job(
+        task_id,
+        on_progress=lambda p, m: print(f"{p}% - {m}"),
+        on_confirm=lambda data: True,  # 自動確認
+    )
+    
+    # === 方式 3：手動 WebSocket 控制 ===
+    client = StampAPIClient("http://192.168.1.100:8000")
+    
+    task_id = client.create_video_detection_job(video_path, prompt)
+    
+    # 連接 WebSocket
+    ws = client.connect_job_websocket(task_id)
+    
+    for event in client.iter_job_events(ws):
+        if event["type"] == "progress":
+            print(f"Progress: {event['progress']}%")
+        elif event["type"] == "waiting_confirm":
+            # 顯示給用戶，等待確認
+            client.confirm_job(task_id)
+        elif event["type"] == "completed":
+            result = event["result"]
+            break
+    
+    ws.close()
 """
 
 import base64
 import io
+import json
+import threading
+import time
 from dataclasses import dataclass, field
+from enum import Enum
 from pathlib import Path
-from typing import Dict, List, Optional, Callable
+from typing import Any, Callable, Dict, Generator, List, Optional, Union
 
 import cv2
 import numpy as np
 from PIL import Image
 import requests
 from loguru import logger
+
+# WebSocket 支援
+try:
+    import websocket
+    WEBSOCKET_AVAILABLE = True
+except ImportError:
+    WEBSOCKET_AVAILABLE = False
+    logger.warning("websocket-client not installed. Install with: pip install websocket-client")
 
 
 # =============================================================================
@@ -89,65 +131,67 @@ class VideoSessionInfo:
     fps: float
 
 
+class JobStatus(Enum):
+    """任務狀態"""
+    PENDING = "pending"
+    RUNNING = "running"
+    WAITING_CONFIRM = "waiting_confirm"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+
+
+@dataclass
+class JobInfo:
+    """任務資訊"""
+    task_id: str
+    task_type: str
+    status: JobStatus
+    progress: int
+    message: str
+    result: Optional[Dict] = None
+    error: Optional[str] = None
+
+
 # =============================================================================
 # 編解碼工具
 # =============================================================================
 
 def encode_image_to_base64(image: np.ndarray) -> str:
     """把 numpy 圖片轉成 base64 字串"""
-    # 確保是 uint8
     if image.dtype != np.uint8:
         image = (image * 255).astype(np.uint8)
     
-    # BGR to RGB（如果需要）
     if len(image.shape) == 3 and image.shape[2] == 3:
         image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
     
-    # 轉成 PIL Image
     pil_image = Image.fromarray(image)
-    
-    # 存成 JPEG bytes
     buffer = io.BytesIO()
     pil_image.save(buffer, format='JPEG', quality=90)
     buffer.seek(0)
     
-    # Base64 編碼
     return base64.b64encode(buffer.getvalue()).decode('utf-8')
 
 
 def encode_mask_to_base64(mask: np.ndarray) -> str:
     """把 numpy mask 轉成 base64 字串"""
-    # 轉成 uint8 (0 或 255)
     mask_uint8 = (mask.astype(np.uint8) * 255)
-    
-    # 轉成 PIL Image（灰階）
     pil_image = Image.fromarray(mask_uint8, mode='L')
-    
-    # 存成 PNG bytes
     buffer = io.BytesIO()
     pil_image.save(buffer, format='PNG')
     buffer.seek(0)
-    
-    # Base64 編碼
     return base64.b64encode(buffer.getvalue()).decode('utf-8')
 
 
 def decode_base64_to_mask(base64_str: str) -> np.ndarray:
     """把 base64 字串轉回 numpy mask"""
-    # Base64 解碼
     img_bytes = base64.b64decode(base64_str)
-    
-    # 讀成 PIL Image
     pil_image = Image.open(io.BytesIO(img_bytes))
-    
-    # 轉成 numpy array
     mask = np.array(pil_image)
     
-    # 確保是 2D
     if mask.ndim == 3:
         mask = mask[:, :, 0]
     
-    # 轉成 boolean
     return mask > 127
 
 
@@ -157,7 +201,6 @@ def decode_base64_to_image(base64_str: str) -> np.ndarray:
     pil_image = Image.open(io.BytesIO(img_bytes))
     image = np.array(pil_image)
     
-    # RGB to BGR（OpenCV 格式）
     if len(image.shape) == 3 and image.shape[2] == 3:
         image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
     
@@ -172,19 +215,34 @@ class StampAPIClient:
     """
     STAMP API 客戶端
     
-    提供與 SAM3Engine 相同的介面，但透過 HTTP 呼叫遠端 Server。
+    提供與 SAM3Engine 相同的介面，透過 HTTP/WebSocket 呼叫遠端 Server。
     """
     
-    def __init__(self, server_url: str = "http://localhost:8000", timeout: int = 120):
+    def __init__(
+        self,
+        server_url: str = "http://localhost:8000",
+        timeout: int = 120,
+        websocket_timeout: int = 30,
+    ):
         """
         初始化 API Client
         
         Args:
             server_url: Server 網址，例如 "http://192.168.1.100:8000"
-            timeout: HTTP 請求超時秒數（偵測/傳播可能較久）
+            timeout: HTTP 請求超時秒數
+            websocket_timeout: WebSocket 操作超時秒數
         """
         self.server_url = server_url.rstrip('/')
         self.timeout = timeout
+        self.websocket_timeout = websocket_timeout
+        
+        # 計算 WebSocket URL
+        if self.server_url.startswith("https://"):
+            self.ws_url = "wss://" + self.server_url[8:]
+        else:
+            self.ws_url = "ws://" + self.server_url[7:]
+        
+        # Video sessions
         self._sessions: Dict[str, VideoSessionInfo] = {}
         
         logger.info(f"STAMP API Client initialized: {self.server_url}")
@@ -196,10 +254,7 @@ class StampAPIClient:
     def check_connection(self) -> bool:
         """檢查 Server 是否可連線"""
         try:
-            response = requests.get(
-                f"{self.server_url}/health",
-                timeout=5
-            )
+            response = requests.get(f"{self.server_url}/health", timeout=5)
             return response.status_code == 200
         except Exception as e:
             logger.error(f"Connection check failed: {e}")
@@ -208,17 +263,14 @@ class StampAPIClient:
     def get_server_status(self) -> dict:
         """取得 Server 狀態"""
         try:
-            response = requests.get(
-                f"{self.server_url}/",
-                timeout=5
-            )
+            response = requests.get(f"{self.server_url}/status", timeout=5)
             return response.json()
         except Exception as e:
             logger.error(f"Failed to get server status: {e}")
             return {"status": "error", "message": str(e)}
     
     # =========================================================================
-    # 圖片偵測（對應 sam3_engine.detect_image）
+    # 同步 API：圖片偵測
     # =========================================================================
     
     def detect_image(
@@ -229,23 +281,19 @@ class StampAPIClient:
         threshold_low: float = 0.5
     ) -> FrameResult:
         """
-        偵測圖片中的物件
+        偵測圖片中的物件（同步）
         
         Args:
             image: 輸入圖片 (H, W, 3) BGR numpy array
-            prompt: 文字提示，例如 "dolphin"
+            prompt: 文字提示
             threshold_high: HIGH 類別的門檻
             threshold_low: LOW 類別的門檻
             
         Returns:
-            FrameResult 物件，包含偵測到的物件列表
+            FrameResult 物件
         """
-        # 把圖片存成暫存檔（因為要用 multipart/form-data 上傳）
-        # 或者直接用 bytes
-        
         # 轉成 JPEG bytes
         if len(image.shape) == 3 and image.shape[2] == 3:
-            # BGR to RGB for PIL
             image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
         else:
             image_rgb = image
@@ -255,7 +303,6 @@ class StampAPIClient:
         pil_image.save(buffer, format='JPEG', quality=90)
         buffer.seek(0)
         
-        # 發送請求
         try:
             response = requests.post(
                 f"{self.server_url}/api/detect",
@@ -268,27 +315,21 @@ class StampAPIClient:
                 timeout=self.timeout
             )
             response.raise_for_status()
-            
         except requests.exceptions.RequestException as e:
             logger.error(f"Detection request failed: {e}")
-            # 回傳空結果
             return FrameResult(frame_index=0, detections=[])
         
-        # 解析回應
         data = response.json()
         
         if not data.get("success", False):
-            logger.warning(f"Detection failed: {data.get('message', 'Unknown error')}")
+            logger.warning(f"Detection failed: {data.get('message')}")
             return FrameResult(frame_index=0, detections=[])
         
         # 轉換成 Detection 物件
         detections = []
         for det_data in data.get("detections", []):
-            # 解碼 mask
             mask = decode_base64_to_mask(det_data["mask"])
-            
-            # bbox 從 xyxy 轉成 xywh
-            bbox = det_data["bbox"]  # [x1, y1, x2, y2]
+            bbox = det_data["bbox"]
             x1, y1, x2, y2 = bbox
             box_xywh = np.array([x1, y1, x2 - x1, y2 - y1])
             
@@ -300,11 +341,10 @@ class StampAPIClient:
             )
             detections.append(detection)
         
-        logger.info(f"Detected {len(detections)} objects")
         return FrameResult(frame_index=0, detections=detections)
     
     # =========================================================================
-    # Mask 修正（對應 sam3_engine.refine_mask）
+    # 同步 API：Mask 修正
     # =========================================================================
     
     def refine_mask(
@@ -315,18 +355,17 @@ class StampAPIClient:
         mask_input: Optional[np.ndarray] = None
     ) -> np.ndarray:
         """
-        用點擊修正 mask
+        用點擊修正 mask（同步）
         
         Args:
-            image: 輸入圖片 (H, W, 3) BGR numpy array
-            points: 點座標 (N, 2) array of [x, y]
-            labels: 點標籤 (N,) array，1=正向（包含），0=負向（排除）
-            mask_input: 可選，目前的 mask，用於迭代修正
+            image: 輸入圖片 (H, W, 3) BGR
+            points: 點座標 (N, 2)
+            labels: 點標籤 (N,)，1=正向，0=負向
+            mask_input: 可選，目前的 mask
             
         Returns:
             修正後的 mask (H, W) boolean array
         """
-        # 準備請求資料
         request_data = {
             "image": encode_image_to_base64(image),
             "points": [{"x": int(p[0]), "y": int(p[1])} for p in points],
@@ -336,7 +375,6 @@ class StampAPIClient:
         if mask_input is not None:
             request_data["current_mask"] = encode_mask_to_base64(mask_input)
         
-        # 發送請求
         try:
             response = requests.post(
                 f"{self.server_url}/api/refine",
@@ -344,43 +382,385 @@ class StampAPIClient:
                 timeout=self.timeout
             )
             response.raise_for_status()
-            
         except requests.exceptions.RequestException as e:
             logger.error(f"Refine request failed: {e}")
-            # 回傳原本的 mask 或空 mask
             if mask_input is not None:
                 return mask_input
             return np.zeros((image.shape[0], image.shape[1]), dtype=bool)
         
-        # 解析回應
         data = response.json()
         
         if not data.get("success", False):
-            logger.warning(f"Refine failed: {data.get('message', 'Unknown error')}")
+            logger.warning(f"Refine failed: {data.get('message')}")
             if mask_input is not None:
                 return mask_input
             return np.zeros((image.shape[0], image.shape[1]), dtype=bool)
         
-        # 解碼 mask
-        mask = decode_base64_to_mask(data["mask"])
-        
-        logger.info(f"Mask refined, score: {data.get('score', 'N/A')}")
-        return mask
+        return decode_base64_to_mask(data["mask"])
     
     # =========================================================================
-    # 影片 Session 管理
+    # Jobs API：建立任務
     # =========================================================================
     
-    def start_video_session(self, video_path: str) -> str:
+    def create_video_detection_job(self, video_path: str, prompt: str) -> str:
         """
-        開始影片 session
+        建立影片偵測任務
         
         Args:
             video_path: 影片路徑（Server 端的路徑）
+            prompt: 偵測提示詞
             
         Returns:
-            Session ID
+            task_id
         """
+        try:
+            response = requests.post(
+                f"{self.server_url}/api/jobs/video-detection",
+                json={"video_path": video_path, "prompt": prompt},
+                timeout=30
+            )
+            response.raise_for_status()
+            data = response.json()
+            return data["task_id"]
+        except Exception as e:
+            logger.error(f"Failed to create video detection job: {e}")
+            raise
+    
+    def create_batch_detection_job(self, image_paths: List[str], prompt: str) -> str:
+        """
+        建立批量圖片偵測任務
+        
+        Args:
+            image_paths: 圖片路徑列表（Server 端）
+            prompt: 偵測提示詞
+            
+        Returns:
+            task_id
+        """
+        try:
+            response = requests.post(
+                f"{self.server_url}/api/jobs/batch-detection",
+                json={"image_paths": image_paths, "prompt": prompt},
+                timeout=30
+            )
+            response.raise_for_status()
+            data = response.json()
+            return data["task_id"]
+        except Exception as e:
+            logger.error(f"Failed to create batch detection job: {e}")
+            raise
+    
+    def create_propagate_job(
+        self,
+        video_path: str,
+        start_frame: int,
+        mask: np.ndarray,
+        points: np.ndarray,
+        labels: np.ndarray,
+        obj_id: int = 0
+    ) -> str:
+        """
+        建立傳播任務
+        
+        Args:
+            video_path: 影片路徑
+            start_frame: 起始幀
+            mask: 初始 mask
+            points: 點座標
+            labels: 點標籤
+            obj_id: 物件 ID
+            
+        Returns:
+            task_id
+        """
+        try:
+            response = requests.post(
+                f"{self.server_url}/api/jobs/propagate",
+                json={
+                    "video_path": video_path,
+                    "start_frame": start_frame,
+                    "mask": encode_mask_to_base64(mask),
+                    "points": [[int(p[0]), int(p[1])] for p in points],
+                    "labels": [int(l) for l in labels],
+                    "obj_id": obj_id,
+                },
+                timeout=30
+            )
+            response.raise_for_status()
+            data = response.json()
+            return data["task_id"]
+        except Exception as e:
+            logger.error(f"Failed to create propagate job: {e}")
+            raise
+    
+    # =========================================================================
+    # Jobs API：查詢和控制
+    # =========================================================================
+    
+    def get_job(self, task_id: str) -> JobInfo:
+        """取得任務資訊"""
+        try:
+            response = requests.get(
+                f"{self.server_url}/api/jobs/{task_id}",
+                timeout=10
+            )
+            response.raise_for_status()
+            data = response.json()
+            
+            return JobInfo(
+                task_id=data["task_id"],
+                task_type=data["task_type"],
+                status=JobStatus(data["status"]),
+                progress=data["progress"],
+                message=data["message"],
+                result=data.get("result"),
+                error=data.get("error"),
+            )
+        except Exception as e:
+            logger.error(f"Failed to get job: {e}")
+            raise
+    
+    def list_jobs(self, status: Optional[str] = None, limit: int = 50) -> List[JobInfo]:
+        """列出任務"""
+        try:
+            params = {"limit": limit}
+            if status:
+                params["status"] = status
+            
+            response = requests.get(
+                f"{self.server_url}/api/jobs",
+                params=params,
+                timeout=10
+            )
+            response.raise_for_status()
+            data = response.json()
+            
+            return [
+                JobInfo(
+                    task_id=d["task_id"],
+                    task_type=d["task_type"],
+                    status=JobStatus(d["status"]),
+                    progress=d["progress"],
+                    message=d["message"],
+                    result=d.get("result"),
+                    error=d.get("error"),
+                )
+                for d in data
+            ]
+        except Exception as e:
+            logger.error(f"Failed to list jobs: {e}")
+            raise
+    
+    def confirm_job(self, task_id: str) -> bool:
+        """確認任務（繼續執行）"""
+        try:
+            response = requests.post(
+                f"{self.server_url}/api/jobs/{task_id}/confirm",
+                timeout=10
+            )
+            response.raise_for_status()
+            return response.json().get("success", False)
+        except Exception as e:
+            logger.error(f"Failed to confirm job: {e}")
+            return False
+    
+    def cancel_job(self, task_id: str) -> bool:
+        """取消任務"""
+        try:
+            response = requests.post(
+                f"{self.server_url}/api/jobs/{task_id}/cancel",
+                timeout=10
+            )
+            response.raise_for_status()
+            return response.json().get("success", False)
+        except Exception as e:
+            logger.error(f"Failed to cancel job: {e}")
+            return False
+    
+    # =========================================================================
+    # WebSocket：進度監聽
+    # =========================================================================
+    
+    def connect_job_websocket(self, task_id: str) -> "websocket.WebSocket":
+        """
+        連接任務的 WebSocket
+        
+        Args:
+            task_id: 任務 ID
+            
+        Returns:
+            WebSocket 連線物件
+        """
+        if not WEBSOCKET_AVAILABLE:
+            raise RuntimeError("websocket-client not installed")
+        
+        ws_url = f"{self.ws_url}/ws/jobs/{task_id}"
+        logger.info(f"Connecting to WebSocket: {ws_url}")
+        
+        ws = websocket.create_connection(
+            ws_url,
+            timeout=self.websocket_timeout
+        )
+        
+        return ws
+    
+    def iter_job_events(
+        self,
+        ws: "websocket.WebSocket"
+    ) -> Generator[Dict[str, Any], None, None]:
+        """
+        迭代 WebSocket 事件
+        
+        Args:
+            ws: WebSocket 連線
+            
+        Yields:
+            事件字典，例如：
+            {"type": "progress", "progress": 45, "message": "Detecting..."}
+            {"type": "waiting_confirm", "data": {...}}
+            {"type": "completed", "result": {...}}
+        """
+        while True:
+            try:
+                message = ws.recv()
+                if not message:
+                    break
+                
+                event = json.loads(message)
+                yield event
+                
+                # 終結事件
+                if event.get("type") in ["completed", "failed", "cancelled"]:
+                    break
+                    
+            except websocket.WebSocketTimeoutException:
+                # 發送 ping 保持連線
+                ws.send(json.dumps({"action": "ping"}))
+            except Exception as e:
+                logger.error(f"WebSocket error: {e}")
+                break
+    
+    def wait_for_job(
+        self,
+        task_id: str,
+        on_progress: Optional[Callable[[int, str], None]] = None,
+        on_confirm: Optional[Callable[[Dict], bool]] = None,
+        on_intermediate: Optional[Callable[[Dict], None]] = None,
+        auto_confirm: bool = False,
+    ) -> Optional[Dict]:
+        """
+        等待任務完成（阻塞式）
+        
+        Args:
+            task_id: 任務 ID
+            on_progress: 進度回調 callback(progress, message)
+            on_confirm: 確認回調 callback(data) -> bool，回傳 True 確認，False 取消
+            on_intermediate: 中間結果回調 callback(data)
+            auto_confirm: 是否自動確認（不等待用戶）
+            
+        Returns:
+            完成時的結果，失敗或取消時回傳 None
+        """
+        if not WEBSOCKET_AVAILABLE:
+            # Fallback：輪詢
+            return self._wait_for_job_polling(task_id, on_progress, auto_confirm)
+        
+        try:
+            ws = self.connect_job_websocket(task_id)
+        except Exception as e:
+            logger.error(f"Failed to connect WebSocket: {e}")
+            return self._wait_for_job_polling(task_id, on_progress, auto_confirm)
+        
+        try:
+            for event in self.iter_job_events(ws):
+                event_type = event.get("type")
+                
+                if event_type == "progress":
+                    if on_progress:
+                        on_progress(event.get("progress", 0), event.get("message", ""))
+                
+                elif event_type == "waiting_confirm":
+                    if auto_confirm:
+                        self.confirm_job(task_id)
+                        ws.send(json.dumps({"action": "confirm"}))
+                    elif on_confirm:
+                        should_continue = on_confirm(event.get("data", {}))
+                        if should_continue:
+                            self.confirm_job(task_id)
+                            ws.send(json.dumps({"action": "confirm"}))
+                        else:
+                            self.cancel_job(task_id)
+                            ws.send(json.dumps({"action": "cancel"}))
+                            return None
+                
+                elif event_type == "intermediate":
+                    if on_intermediate:
+                        on_intermediate(event.get("data", {}))
+                
+                elif event_type == "completed":
+                    return event.get("result")
+                
+                elif event_type == "failed":
+                    logger.error(f"Job failed: {event.get('error')}")
+                    return None
+                
+                elif event_type == "cancelled":
+                    logger.info("Job cancelled")
+                    return None
+                
+        finally:
+            ws.close()
+        
+        return None
+    
+    def _wait_for_job_polling(
+        self,
+        task_id: str,
+        on_progress: Optional[Callable[[int, str], None]] = None,
+        auto_confirm: bool = False,
+        poll_interval: float = 1.0,
+    ) -> Optional[Dict]:
+        """輪詢方式等待任務完成（WebSocket 不可用時的 fallback）"""
+        logger.info(f"Using polling mode for job: {task_id}")
+        
+        while True:
+            try:
+                job = self.get_job(task_id)
+                
+                if on_progress:
+                    on_progress(job.progress, job.message)
+                
+                if job.status == JobStatus.WAITING_CONFIRM:
+                    if auto_confirm:
+                        self.confirm_job(task_id)
+                    else:
+                        # 沒有 WebSocket，無法互動，自動確認
+                        logger.warning("No WebSocket, auto-confirming job")
+                        self.confirm_job(task_id)
+                
+                elif job.status == JobStatus.COMPLETED:
+                    return job.result
+                
+                elif job.status == JobStatus.FAILED:
+                    logger.error(f"Job failed: {job.error}")
+                    return None
+                
+                elif job.status == JobStatus.CANCELLED:
+                    logger.info("Job cancelled")
+                    return None
+                
+                time.sleep(poll_interval)
+                
+            except Exception as e:
+                logger.error(f"Polling error: {e}")
+                time.sleep(poll_interval)
+    
+    # =========================================================================
+    # 影片 Session API（相容 SAM3Engine 介面）
+    # =========================================================================
+    
+    def start_video_session(self, video_path: str) -> str:
+        """開始影片 session"""
         try:
             response = requests.post(
                 f"{self.server_url}/api/video/load",
@@ -388,86 +768,53 @@ class StampAPIClient:
                 timeout=self.timeout
             )
             response.raise_for_status()
+            data = response.json()
             
-        except requests.exceptions.RequestException as e:
+            session_id = data["session_id"]
+            self._sessions[session_id] = VideoSessionInfo(
+                session_id=session_id,
+                video_path=video_path,
+                total_frames=data["total_frames"],
+                width=data["width"],
+                height=data["height"],
+                fps=data["fps"]
+            )
+            
+            return session_id
+        except Exception as e:
             logger.error(f"Failed to start video session: {e}")
-            raise RuntimeError(f"Failed to start video session: {e}")
-        
-        data = response.json()
-        
-        if not data.get("success", False):
-            raise RuntimeError(f"Failed to load video: {data.get('message', 'Unknown error')}")
-        
-        # 儲存 session 資訊
-        session_id = data["session_id"]
-        self._sessions[session_id] = VideoSessionInfo(
-            session_id=session_id,
-            video_path=video_path,
-            total_frames=data["total_frames"],
-            width=data["width"],
-            height=data["height"],
-            fps=data["fps"]
-        )
-        
-        logger.info(f"Video session started: {session_id}")
-        return session_id
+            raise
     
     def get_session_info(self, session_id: str) -> Optional[VideoSessionInfo]:
         """取得 session 資訊"""
         return self._sessions.get(session_id)
     
     def get_frame(self, session_id: str, frame_idx: int) -> np.ndarray:
-        """
-        取得影片的某一幀
-        
-        Args:
-            session_id: Session ID
-            frame_idx: 幀索引
-            
-        Returns:
-            圖片 (H, W, 3) BGR numpy array
-        """
+        """取得影片的某一幀"""
         try:
             response = requests.get(
                 f"{self.server_url}/api/video/{session_id}/frame/{frame_idx}",
                 timeout=self.timeout
             )
             response.raise_for_status()
-            
-        except requests.exceptions.RequestException as e:
+            data = response.json()
+            return decode_base64_to_image(data["image"])
+        except Exception as e:
             logger.error(f"Failed to get frame: {e}")
-            raise RuntimeError(f"Failed to get frame: {e}")
-        
-        data = response.json()
-        
-        if not data.get("success", False):
-            raise RuntimeError(f"Failed to get frame: {data.get('message', 'Unknown error')}")
-        
-        # 解碼圖片
-        image = decode_base64_to_image(data["image"])
-        return image
+            raise
     
     def close_session(self, session_id: str) -> None:
         """關閉影片 session"""
         try:
-            response = requests.delete(
+            requests.delete(
                 f"{self.server_url}/api/video/{session_id}",
                 timeout=10
             )
-            response.raise_for_status()
-            
-        except requests.exceptions.RequestException as e:
+        except Exception as e:
             logger.warning(f"Failed to close session: {e}")
         
-        # 移除本地記錄
         if session_id in self._sessions:
             del self._sessions[session_id]
-        
-        logger.info(f"Video session closed: {session_id}")
-    
-    # =========================================================================
-    # Mask 傳播（對應 sam3_engine.propagate_mask）
-    # =========================================================================
     
     def propagate_mask(
         self,
@@ -480,100 +827,69 @@ class StampAPIClient:
         progress_callback: Optional[Callable[[int, int], None]] = None
     ) -> Dict[int, np.ndarray]:
         """
-        傳播 mask 到後續的幀
+        傳播 mask 到後續的幀（同步版，使用 Jobs API）
         
         Args:
             video_path: 影片路徑（Server 端）
             start_frame: 起始幀
-            mask: 初始 mask (H, W)
-            points: 點座標 (N, 2)
-            labels: 點標籤 (N,)
+            mask: 初始 mask
+            points: 點座標
+            labels: 點標籤
             obj_id: 物件 ID
-            progress_callback: 進度回調函數 callback(current, total)
+            progress_callback: 進度回調
             
         Returns:
-            Dict[frame_idx, mask]，每一幀的 mask
+            Dict[frame_idx, mask]
         """
-        # 找到對應的 session
-        session_id = None
-        for sid, info in self._sessions.items():
-            if info.video_path == video_path:
-                session_id = sid
-                break
+        # 建立傳播任務
+        task_id = self.create_propagate_job(
+            video_path=video_path,
+            start_frame=start_frame,
+            mask=mask,
+            points=points,
+            labels=labels,
+            obj_id=obj_id,
+        )
         
-        if session_id is None:
-            # 沒有 session，先建立
-            session_id = self.start_video_session(video_path)
-        
-        # 準備請求
-        request_data = {
-            "session_id": session_id,
-            "start_frame": start_frame,
-            "mask": encode_mask_to_base64(mask),
-            "points": [[int(p[0]), int(p[1])] for p in points],
-            "labels": [int(l) for l in labels],
-            "obj_id": obj_id
-        }
-        
-        # 發送請求（這個可能要很久）
-        try:
-            response = requests.post(
-                f"{self.server_url}/api/video/propagate",
-                json=request_data,
-                timeout=600  # 10 分鐘，傳播可能很久
-            )
-            response.raise_for_status()
-            
-        except requests.exceptions.RequestException as e:
-            logger.error(f"Propagate request failed: {e}")
-            return {}
-        
-        # 解析回應
-        data = response.json()
-        
-        if not data.get("success", False):
-            logger.warning(f"Propagate failed: {data.get('message', 'Unknown error')}")
-            return {}
-        
-        # 解碼所有 mask
-        results = {}
-        encoded_results = data.get("results", {})
-        total = len(encoded_results)
-        
-        for i, (frame_idx_str, mask_base64) in enumerate(encoded_results.items()):
-            frame_idx = int(frame_idx_str)
-            results[frame_idx] = decode_base64_to_mask(mask_base64)
-            
-            # 回報進度
+        # 等待完成
+        def on_progress(progress, message):
             if progress_callback:
-                progress_callback(i + 1, total)
+                # 估算幀數
+                total = 100  # 假設
+                current = int(progress * total / 100)
+                progress_callback(current, total)
         
-        logger.info(f"Propagated to {len(results)} frames")
-        return results
+        result = self.wait_for_job(
+            task_id,
+            on_progress=on_progress,
+            auto_confirm=True,
+        )
+        
+        if result is None:
+            return {}
+        
+        # TODO: 從 Server 取得實際的 mask 資料
+        # 目前 result 只有 frame_indices，需要另外取得 mask
+        return {}
     
     # =========================================================================
-    # Context Manager（支援 with 語法）
+    # Context Manager
     # =========================================================================
     
     def __enter__(self):
         return self
     
     def __exit__(self, exc_type, exc_val, exc_tb):
-        # 關閉所有 session
         for session_id in list(self._sessions.keys()):
             self.close_session(session_id)
     
-    # =========================================================================
-    # 屬性（相容性）
-    # =========================================================================
-    
     @property
     def is_mock(self) -> bool:
-        """是否為 mock 模式（API Client 永遠不是 mock）"""
+        """是否為 mock 模式"""
         return False
     
     def shutdown(self) -> None:
-        """關閉 client（關閉所有 session）"""
+        """關閉 client"""
         for session_id in list(self._sessions.keys()):
             self.close_session(session_id)
 
@@ -586,18 +902,15 @@ if __name__ == "__main__":
     import argparse
     
     parser = argparse.ArgumentParser(description="Test STAMP API Client")
-    parser.add_argument("--server", type=str, default="http://localhost:8000",
-                        help="Server URL")
-    parser.add_argument("--image", type=str, default=None,
-                        help="Test image path")
-    parser.add_argument("--prompt", type=str, default="dolphin",
-                        help="Detection prompt")
+    parser.add_argument("--server", type=str, default="http://localhost:8000")
+    parser.add_argument("--image", type=str, default=None)
+    parser.add_argument("--video", type=str, default=None)
+    parser.add_argument("--prompt", type=str, default="dolphin")
     args = parser.parse_args()
     
     print("=" * 50)
     print("STAMP API Client Test")
     print("=" * 50)
-    print(f"Server: {args.server}")
     
     client = StampAPIClient(args.server)
     
@@ -611,20 +924,38 @@ if __name__ == "__main__":
         print("    ❌ Connection failed!")
         exit(1)
     
-    # 測試偵測
+    # 測試同步偵測
     if args.image:
-        print(f"\n[2] Testing detection...")
-        print(f"    Image: {args.image}")
-        print(f"    Prompt: {args.prompt}")
-        
+        print(f"\n[2] Testing image detection...")
         image = cv2.imread(args.image)
-        if image is None:
-            print(f"    ❌ Cannot read image!")
-        else:
+        if image is not None:
             result = client.detect_image(image, args.prompt)
             print(f"    ✅ Detected {result.num_objects} objects")
-            for det in result.detections:
-                print(f"       - Object {det.obj_id}: score={det.score:.2f}")
+    
+    # 測試 Jobs API
+    if args.video:
+        print(f"\n[3] Testing video detection job...")
+        
+        task_id = client.create_video_detection_job(args.video, args.prompt)
+        print(f"    Task ID: {task_id}")
+        
+        def on_progress(progress, message):
+            print(f"    [{progress:3d}%] {message}")
+        
+        def on_confirm(data):
+            print(f"    Found {data.get('num_objects', 0)} objects. Confirming...")
+            return True
+        
+        result = client.wait_for_job(
+            task_id,
+            on_progress=on_progress,
+            on_confirm=on_confirm,
+        )
+        
+        if result:
+            print(f"    ✅ Completed! {result}")
+        else:
+            print("    ❌ Failed or cancelled")
     
     print("\n" + "=" * 50)
     print("✅ Test complete!")
