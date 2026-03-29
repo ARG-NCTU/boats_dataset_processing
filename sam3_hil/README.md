@@ -1,6 +1,6 @@
-# HIL-AA Maritime Annotation System
+# STAMP Annotation System
 
-> **Human-in-the-Loop Active Annotation:**  
+> **SAM Tracking Annotation with Minimal Processing:**  
 > Leveraging SAM 3 Presence Confidence for Efficient Maritime Video Annotation
 
 [![Python](https://img.shields.io/badge/Python-3.12-blue.svg)](https://www.python.org/)
@@ -404,7 +404,7 @@ python /app/src/download_segformer_model.py -o /app/models/Segformer/segformer_m
 
 ## 📜 License
 
-MIT License - Sonic @ NYCU Assistive Robotics Group
+MIT License - Adam @ NYCU Assistive Robotics Group
 
 ---
 
@@ -413,9 +413,9 @@ MIT License - Sonic @ NYCU Assistive Robotics Group
 If you use this system in your research, please cite:
 
 ```bibtex
-@mastersthesis{sonic2026hilaa,
+@mastersthesis{AdamShihSTAMP,
   title={基於 SAM 3 語義置信度與主動學習之海事影像人機協作標註系統},
-  author={Sonic},
+  author={Adam},
   school={National Yang Ming Chiao Tung University},
   year={2026},
   note={Assistive Robotics Group}
@@ -428,4 +428,4 @@ If you use this system in your research, please cite:
 基於 SAM 3 語義置信度與主動學習之海事影像人機協作標註系統
 
 **English Title:**  
-Human-in-the-Loop Active Annotation System for Maritime Video Using SAM 3 Semantic Confidence and Active Learning
+Human-in-the-Loop Active Annotation System for Video Using SAM 3 Semantic Confidence and Active Learning
