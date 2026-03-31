@@ -101,7 +101,7 @@ class ConnectionTestWorker(QThread):
             
             # 檢查連線
             if not client.check_connection():
-                self.finished.emit(False, "無法連線到伺服器")
+                self.finished.emit(False, "Cannot connect to server")
                 return
             
             # 取得狀態
@@ -114,17 +114,17 @@ class ConnectionTestWorker(QThread):
                 if gpu_info:
                     gpu_name = gpu_info.get("device", "Unknown GPU")
                     vram = gpu_info.get("memory_allocated_gb", 0)
-                    message = f"已連線 ✓\nSAM3 已載入\n{gpu_name}\nVRAM: {vram:.1f} GB"
+                    message = f"Connected ✓\nSAM3 loaded\n{gpu_name}\nVRAM: {vram:.1f} GB"
                 else:
-                    message = "已連線 ✓\nSAM3 已載入"
+                    message = "Connected ✓\nSAM3 loaded"
             else:
-                message = "已連線，但 SAM3 未載入"
+                message = "Connected, but SAM3 is not loaded"
             
             self.finished.emit(True, message)
             
         except Exception as e:
             logger.error(f"Connection test failed: {e}")
-            self.finished.emit(False, f"連線失敗: {str(e)}")
+            self.finished.emit(False, f"Connection failed: {str(e)}")
 
 
 # =============================================================================
@@ -145,12 +145,12 @@ class GPUCheckWorker(QThread):
                 total_memory = torch.cuda.get_device_properties(0).total_memory / 1024**3
                 self.finished.emit(True, f"{device_name}\nVRAM: {total_memory:.1f} GB")
             else:
-                self.finished.emit(False, "未偵測到 NVIDIA GPU")
+                self.finished.emit(False, "No NVIDIA GPU detected")
                 
         except ImportError:
-            self.finished.emit(False, "PyTorch 未安裝")
+            self.finished.emit(False, "PyTorch is not installed")
         except Exception as e:
-            self.finished.emit(False, f"檢測失敗: {str(e)}")
+            self.finished.emit(False, f"Detection failed: {str(e)}")
 
 
 # =============================================================================
@@ -203,8 +203,8 @@ class StartupDialog(QDialog):
         return super().exec()
     
     def _init_ui(self):
-        """初始化 UI"""
-        self.setWindowTitle("STAMP 啟動設定")
+        """Initialize UI."""
+        self.setWindowTitle("STAMP Startup Settings")
         self.setMinimumWidth(450)
         self.setModal(True)
         
@@ -214,7 +214,7 @@ class StartupDialog(QDialog):
         layout.setContentsMargins(20, 20, 20, 20)
         
         # 標題
-        title_label = QLabel("STAMP 啟動設定")
+        title_label = QLabel("STAMP Startup Settings")
         title_font = QFont()
         title_font.setPointSize(14)
         title_font.setBold(True)
@@ -223,35 +223,35 @@ class StartupDialog(QDialog):
         layout.addWidget(title_label)
         
         # 模式選擇
-        mode_group = QGroupBox("執行模式")
+        mode_group = QGroupBox("Execution Mode")
         mode_layout = QVBoxLayout(mode_group)
         
         self._mode_button_group = QButtonGroup(self)
         
         # 本地模式
-        self._local_radio = QRadioButton("本地模式（需要 NVIDIA GPU，建議 12GB+ VRAM）")
+        self._local_radio = QRadioButton("Local mode (requires NVIDIA GPU, recommended 12GB+ VRAM)")
         self._mode_button_group.addButton(self._local_radio, 0)
         mode_layout.addWidget(self._local_radio)
         
         # 本地模式狀態
-        self._local_status = QLabel("檢測中...")
+        self._local_status = QLabel("Detecting...")
         self._local_status.setStyleSheet("color: gray; margin-left: 20px;")
         mode_layout.addWidget(self._local_status)
         
         # 遠端模式
-        self._server_radio = QRadioButton("遠端伺服器")
+        self._server_radio = QRadioButton("Remote server")
         self._mode_button_group.addButton(self._server_radio, 1)
         mode_layout.addWidget(self._server_radio)
         
         layout.addWidget(mode_group)
         
         # Server 設定
-        self._server_group = QGroupBox("伺服器設定")
+        self._server_group = QGroupBox("Server Settings")
         server_layout = QVBoxLayout(self._server_group)
         
         # URL 輸入
         url_layout = QHBoxLayout()
-        url_label = QLabel("網址：")
+        url_label = QLabel("URL:")
         self._url_input = QLineEdit()
         self._url_input.setPlaceholderText("http://192.168.1.100:8000")
         url_layout.addWidget(url_label)
@@ -260,14 +260,14 @@ class StartupDialog(QDialog):
         
         # 測試連線按鈕
         test_layout = QHBoxLayout()
-        self._test_button = QPushButton("測試連線")
+        self._test_button = QPushButton("Test Connection")
         self._test_button.clicked.connect(self._on_test_connection)
         test_layout.addWidget(self._test_button)
         test_layout.addStretch()
         server_layout.addLayout(test_layout)
         
         # 連線狀態
-        self._server_status = QLabel("尚未測試")
+        self._server_status = QLabel("Not tested yet")
         self._server_status.setStyleSheet("color: gray;")
         self._server_status.setWordWrap(True)
         server_layout.addWidget(self._server_status)
@@ -275,7 +275,7 @@ class StartupDialog(QDialog):
         layout.addWidget(self._server_group)
         
         # 記住設定
-        self._remember_check = QCheckBox("下次啟動時記住設定")
+        self._remember_check = QCheckBox("Remember settings for next startup")
         self._remember_check.setChecked(True)
         layout.addWidget(self._remember_check)
         
@@ -283,11 +283,11 @@ class StartupDialog(QDialog):
         button_layout = QHBoxLayout()
         button_layout.addStretch()
         
-        self._cancel_button = QPushButton("取消")
+        self._cancel_button = QPushButton("Cancel")
         self._cancel_button.clicked.connect(self.reject)
         button_layout.addWidget(self._cancel_button)
         
-        self._start_button = QPushButton("啟動")
+        self._start_button = QPushButton("Start")
         self._start_button.setDefault(True)
         self._start_button.clicked.connect(self._on_start)
         button_layout.addWidget(self._start_button)
@@ -362,8 +362,8 @@ class StartupDialog(QDialog):
             self._check_gpu()
     
     def _check_gpu(self):
-        """檢測本地 GPU"""
-        self._local_status.setText("檢測中...")
+        """Check local GPU."""
+        self._local_status.setText("Detecting...")
         self._local_status.setStyleSheet("color: gray; margin-left: 20px;")
         
         self._gpu_worker = GPUCheckWorker()
@@ -373,11 +373,11 @@ class StartupDialog(QDialog):
     def _on_gpu_check_finished(self, has_gpu: bool, message: str):
         """GPU 檢測完成"""
         if has_gpu:
-            self._local_status.setText(f"✅ {message}")
+            self._local_status.setText(f"✓ {message}")
             self._local_status.setStyleSheet("color: green; margin-left: 20px;")
             self._local_radio.setEnabled(True)
         else:
-            self._local_status.setText(f"❌ {message}")
+            self._local_status.setText(f"✗ {message}")
             self._local_status.setStyleSheet("color: red; margin-left: 20px;")
             # 不禁用，讓用戶自己決定
             # self._local_radio.setEnabled(False)
@@ -387,7 +387,7 @@ class StartupDialog(QDialog):
         url = self._url_input.text().strip()
         
         if not url:
-            self._server_status.setText("❌ 請輸入伺服器網址")
+            self._server_status.setText("✗ Please enter server URL")
             self._server_status.setStyleSheet("color: red;")
             return
         
@@ -397,8 +397,8 @@ class StartupDialog(QDialog):
             self._url_input.setText(url)
         
         self._test_button.setEnabled(False)
-        self._test_button.setText("測試中...")
-        self._server_status.setText("正在連線...")
+        self._test_button.setText("Testing...")
+        self._server_status.setText("Connecting...")
         self._server_status.setStyleSheet("color: gray;")
         
         self._connection_worker = ConnectionTestWorker(url)
@@ -408,13 +408,13 @@ class StartupDialog(QDialog):
     def _on_connection_test_finished(self, success: bool, message: str):
         """連線測試完成"""
         self._test_button.setEnabled(True)
-        self._test_button.setText("測試連線")
+        self._test_button.setText("Test Connection")
         
         if success:
-            self._server_status.setText(f"✅ {message}")
+            self._server_status.setText(f"✓ {message}")
             self._server_status.setStyleSheet("color: green;")
         else:
-            self._server_status.setText(f"❌ {message}")
+            self._server_status.setText(f"✗ {message}")
             self._server_status.setStyleSheet("color: red;")
     
     def _on_start(self):
@@ -423,7 +423,7 @@ class StartupDialog(QDialog):
         if self._server_radio.isChecked():
             url = self._url_input.text().strip()
             if not url:
-                QMessageBox.warning(self, "錯誤", "請輸入伺服器網址")
+                QMessageBox.warning(self, "Error", "Please enter server URL")
                 return
             
             # 確保有 http:// 前綴
@@ -474,12 +474,12 @@ if __name__ == "__main__":
     if dialog.exec() == QDialog.DialogCode.Accepted:
         config = dialog.get_config()
         print("=" * 40)
-        print("啟動設定")
+        print("Startup Settings")
         print("=" * 40)
-        print(f"模式: {config.mode.value}")
+        print(f"Mode: {config.mode.value}")
         print(f"Server URL: {config.server_url}")
-        print(f"記住設定: {config.remember}")
+        print(f"Remember settings: {config.remember}")
     else:
-        print("使用者取消")
+        print("User cancelled")
     
     sys.exit(0)
