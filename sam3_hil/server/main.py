@@ -57,6 +57,9 @@ sys.path.insert(0, str(project_root))
 # SAM3 engine instance (for direct API calls like /api/detect)
 sam3_engine = None
 
+# TaskManager instance
+task_manager = None
+
 # Server start time
 server_start_time = None
 
@@ -78,7 +81,7 @@ async def lifespan(app: FastAPI):
     - Cleanup TaskManager
     - Release SAM3 resources
     """
-    global sam3_engine, server_start_time
+    global sam3_engine, task_manager, server_start_time
     
     logger.info("=" * 60)
     logger.info("Starting STAMP API Server...")
@@ -105,7 +108,7 @@ async def lifespan(app: FastAPI):
     try:
         logger.info("[2/2] Initializing TaskManager...")
         from server.task_manager import init_task_manager
-        init_task_manager(sam3_engine=sam3_engine)
+        task_manager = init_task_manager(sam3_engine=sam3_engine)
         logger.info("      TaskManager initialized ✓")
     except Exception as e:
         logger.error(f"      Failed to initialize TaskManager: {e}")
