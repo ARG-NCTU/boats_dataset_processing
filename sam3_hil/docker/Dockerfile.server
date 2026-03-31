@@ -17,10 +17,12 @@ ENV DEBIAN_FRONTEND=noninteractive
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONDONTWRITEBYTECODE=1
 
-# Install system dependencies
+# Install system dependencies (gcc/g++ required for Triton JIT compilation)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
     curl \
+    gcc \
+    g++ \
     libgl1-mesa-glx \
     libglib2.0-0 \
     && rm -rf /var/lib/apt/lists/*
