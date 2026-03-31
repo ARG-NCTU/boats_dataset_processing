@@ -28,7 +28,11 @@ from typing import Dict, List, Optional, Tuple, Set
 import cv2
 import numpy as np
 import gc
-import torch
+try:
+    import torch
+    TORCH_AVAILABLE = True
+except ImportError:
+    TORCH_AVAILABLE = False
 
 from PyQt6.QtWidgets import (
     QApplication,
@@ -67,7 +71,16 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 # Import our modules
 try:
     from core.video_loader import VideoLoader, ImageFolderLoader
-    from core.sam3_engine import SAM3Engine, FrameResult, visualize_frame_results, Detection
+    # 條件式導入 sam3_engine（只有 local 模式需要）
+    try:
+        from core.sam3_engine import SAM3Engine, FrameResult, visualize_frame_results, Detection
+        SAM3_AVAILABLE = True
+    except ImportError:
+        SAM3_AVAILABLE = False
+        # 使用 server_worker 中的相容類別
+        from gui.server_workers.server_worker import Detection, FrameResult
+        SAM3Engine = None
+        visualize_frame_results = None
     from core.confidence_analyzer import (
         ConfidenceAnalyzer, 
         ConfidenceCategory,
@@ -99,7 +112,7 @@ def clear_gpu_memory():
     gc.collect()
     
     # 清理 PyTorch CUDA 快取
-    if torch.cuda.is_available():
+    if TORCH_AVAILABLE and torch.cuda.is_available():
         torch.cuda.empty_cache()
         torch.cuda.synchronize()
         
@@ -2621,8 +2634,14 @@ class HILAAMainWindow(QMainWindow):
     
     def on_batch_finished(self, result: dict):
         """批次處理完成。"""
-        # 清理對話框和 worker
+        logger.info(f"=== on_batch_finished called ===")
+        
+        # 先斷開 canceled 信號，防止 close() 意外觸發
         if hasattr(self, 'progress_dialog') and self.progress_dialog:
+            try:
+                self.progress_dialog.canceled.disconnect(self._on_cancel_detection)
+            except:
+                pass
             self.progress_dialog.close()
             self.progress_dialog = None
         
@@ -2824,8 +2843,14 @@ class HILAAMainWindow(QMainWindow):
     
     def on_detection_finished(self, result: dict):
         """偵測完成。"""
+        logger.info(f"=== on_detection_finished called, results: {len(result.get('results', {}))} frames ===")
         # 清理對話框和 worker
+        # 先斷開 canceled 信號，防止 close() 意外觸發
         if hasattr(self, 'progress_dialog') and self.progress_dialog:
+            try:
+                self.progress_dialog.canceled.disconnect(self._on_cancel_detection)
+            except:
+                pass
             self.progress_dialog.close()
             self.progress_dialog = None
         
