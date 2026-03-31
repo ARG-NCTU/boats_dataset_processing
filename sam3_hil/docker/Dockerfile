@@ -94,7 +94,9 @@ WORKDIR /app
 RUN pip install torch==2.7.0 torchvision torchaudio --index-url https://download.pytorch.org/whl/cu126
 
 COPY requirements.txt /app/
+COPY requirements-client.txt /app/
 RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir -r requirements-client.txt
 RUN pip install opencv-contrib-python
 # =============================================================================
 # SAM 3 Installation (from GitHub)
