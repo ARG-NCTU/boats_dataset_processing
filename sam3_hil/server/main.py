@@ -289,6 +289,9 @@ app.include_router(refinement.router, prefix="/api", tags=["Refinement"])
 app.include_router(video.router, prefix="/api", tags=["Video"])
 
 # 任務 API（新增的）
+from server.routes import upload
+app.include_router(upload.router, prefix="/api", tags=["Upload"])
+
 from server.routes import jobs, websocket
 
 app.include_router(jobs.router, prefix="/api", tags=["Jobs"])
