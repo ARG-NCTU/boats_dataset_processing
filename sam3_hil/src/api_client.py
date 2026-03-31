@@ -868,9 +868,21 @@ class StampAPIClient:
         if result is None:
             return {}
         
-        # TODO: 從 Server 取得實際的 mask 資料
-        # 目前 result 只有 frame_indices，需要另外取得 mask
-        return {}
+        # 解碼 RLE mask
+        from pycocotools import mask as mask_utils
+        
+        masks_data = result.get("masks", {})
+        decoded_results = {}
+        
+        for frame_idx_str, rle in masks_data.items():
+            frame_idx = int(frame_idx_str)
+            # 確保 counts 是 bytes
+            if isinstance(rle["counts"], str):
+                rle["counts"] = rle["counts"].encode("utf-8")
+            mask = mask_utils.decode(rle).astype(bool)
+            decoded_results[frame_idx] = mask
+        
+        return decoded_results
     
     # =========================================================================
     # Context Manager
