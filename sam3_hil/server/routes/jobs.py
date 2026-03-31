@@ -113,13 +113,23 @@ class ActionResponse(BaseModel):
 
 def task_to_response(task: Task) -> TaskResponse:
     """把 Task 物件轉成 API 回應格式"""
+    # 過濾 params 中的 numpy array（無法 JSON 序列化）
+    safe_params = {}
+    for key, value in task.params.items():
+        if isinstance(value, np.ndarray):
+            safe_params[key] = f"<ndarray shape={value.shape}>"
+        elif isinstance(value, (str, int, float, bool, list, dict, type(None))):
+            safe_params[key] = value
+        else:
+            safe_params[key] = str(value)
+    
     return TaskResponse(
         task_id=task.task_id,
         task_type=task.task_type.value,
         status=task.status.value,
         progress=task.progress,
         message=task.message,
-        params=task.params,
+        params=safe_params,
         result=task.result,
         error=task.error,
         created_at=task.created_at.isoformat(),
