@@ -40,7 +40,26 @@ import numpy as np
 try:
     from .sam3_engine import FrameResult, Detection
 except ImportError:
-    from sam3_engine import FrameResult, Detection
+    try:
+        from src.gui.server_workers.server_worker import Detection, FrameResult
+    except ImportError:
+        # 定義最小版本
+        from dataclasses import dataclass
+        from typing import Optional
+        import numpy as np
+        
+        @dataclass
+        class Detection:
+            object_id: int
+            mask: np.ndarray
+            confidence: float
+            label: str = "object"
+            
+        @dataclass
+        class FrameResult:
+            frame_index: int
+            detections: list
+            timestamp: Optional[float] = None
 
 logger = logging.getLogger(__name__)
 
