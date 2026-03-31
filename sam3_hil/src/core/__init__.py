@@ -10,14 +10,25 @@ Core modules for HIL-AA system.
 """
 
 from .video_loader import VideoLoader, VideoMetadata, load_video, extract_frames
-from .sam3_engine import (
-    SAM3Engine, 
-    Detection, 
-    FrameResult, 
-    VideoSessionInfo,
-    visualize_frame_results,
-    save_visualization_video,
-)
+try:
+    from .sam3_engine import (
+        SAM3Engine, 
+        Detection, 
+        FrameResult, 
+        VideoSessionInfo,
+        visualize_frame_results,
+        save_visualization_video,
+    )
+    SAM3_AVAILABLE = True
+except ImportError:
+    SAM3_AVAILABLE = False
+    SAM3Engine = None
+    Detection = None
+    FrameResult = None
+    VideoSessionInfo = None
+    visualize_frame_results = None
+    save_visualization_video = None
+    
 from .confidence_analyzer import (
     ConfidenceAnalyzer,
     ConfidenceCategory,
