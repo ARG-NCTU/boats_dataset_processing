@@ -270,6 +270,112 @@ class StampAPIClient:
             return {"status": "error", "message": str(e)}
     
     # =========================================================================
+    # 影片上傳 API
+    # =========================================================================
+    
+    def upload_video(
+        self,
+        video_path: str,
+        on_progress: Optional[Callable[[int, int], None]] = None,
+    ) -> Optional[str]:
+        """
+        上傳影片到 Server
+        
+        Args:
+            video_path: 本地影片路徑
+            on_progress: 進度回調 (uploaded_bytes, total_bytes)
+            
+        Returns:
+            str: Server 端的影片路徑，失敗則返回 None
+        """
+        video_path = Path(video_path)
+        
+        if not video_path.exists():
+            logger.error(f"Video file not found: {video_path}")
+            return None
+        
+        file_size = video_path.stat().st_size
+        logger.info(f"Uploading video: {video_path.name} ({file_size / 1024**2:.1f} MB)")
+        
+        try:
+            with open(video_path, 'rb') as f:
+                files = {'file': (video_path.name, f, 'video/mp4')}
+                
+                response = requests.post(
+                    f"{self.server_url}/api/upload/video",
+                    files=files,
+                    timeout=None,
+                )
+            
+            response.raise_for_status()
+            result = response.json()
+            
+            if result.get("success"):
+                server_path = result["server_path"]
+                logger.info(f"Upload successful: {server_path}")
+                return server_path
+            else:
+                logger.error(f"Upload failed: {result.get('message')}")
+                return None
+                
+        except Exception as e:
+            logger.error(f"Upload error: {e}")
+            return None
+    
+    def upload_video_with_progress(
+        self,
+        video_path: str,
+        progress_callback: Optional[Callable[[int, str], None]] = None,
+    ) -> Optional[str]:
+        """
+        上傳影片，帶有進度回調（適合 GUI 使用）
+        """
+        video_path = Path(video_path)
+        
+        if not video_path.exists():
+            if progress_callback:
+                progress_callback(0, "Error: File not found")
+            return None
+        
+        file_size = video_path.stat().st_size
+        file_size_mb = file_size / 1024**2
+        
+        if progress_callback:
+            progress_callback(0, f"Preparing to upload ({file_size_mb:.1f} MB)...")
+        
+        try:
+            with open(video_path, 'rb') as f:
+                files = {'file': (video_path.name, f, 'video/mp4')}
+                
+                if progress_callback:
+                    progress_callback(5, f"Uploading {video_path.name}...")
+                
+                response = requests.post(
+                    f"{self.server_url}/api/upload/video",
+                    files=files,
+                    timeout=None,
+                )
+            
+            response.raise_for_status()
+            result = response.json()
+            
+            if result.get("success"):
+                server_path = result["server_path"]
+                if progress_callback:
+                    progress_callback(100, "Upload complete!")
+                return server_path
+            else:
+                if progress_callback:
+                    progress_callback(0, f"Upload failed: {result.get('message')}")
+                return None
+                
+        except Exception as e:
+            logger.error(f"Upload error: {e}")
+            if progress_callback:
+                progress_callback(0, f"Upload error: {str(e)}")
+            return None
+
+    # =========================================================================
     # 同步 API：圖片偵測
     # =========================================================================
     
