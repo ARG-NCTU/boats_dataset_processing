@@ -265,7 +265,8 @@ class ServerVideoDetectionWorker(BaseServerWorker):
     
     # 額外信號
     ready_to_propagate = pyqtSignal(int, dict)  # (物件數, 初步結果)
-    finished = pyqtSignal(dict)                  # 結果
+    finished = pyqtSignal(dict)                  # 完成結果
+    upload_progress = pyqtSignal(int, str)       # 新增：上傳進度 (percent, message)
     
     def __init__(
         self,
@@ -276,6 +277,7 @@ class ServerVideoDetectionWorker(BaseServerWorker):
         super().__init__(server_url)
         self.video_path = video_path
         self.prompt = prompt
+        self._server_video_path = None  # 上傳後的 Server 路徑
     
     def continue_propagation(self):
         """
@@ -286,13 +288,48 @@ class ServerVideoDetectionWorker(BaseServerWorker):
         self.confirm()
     
     def run(self):
-        """執行任務"""
+        """執行任務（含上傳）"""
         try:
-            # Step 1: 建立任務
-            self.progress.emit(5, "Creating video detection job...")
+            # =================================================================
+            # Step 0: 檢查是否需要上傳
+            # =================================================================
+            video_path_to_use = self.video_path
+            
+            # 判斷是否為本地路徑（Server 路徑是 /app/... 開頭）
+            is_local_path = not self.video_path.startswith("/app/")
+            
+            if is_local_path:
+                self.upload_progress.emit(0, "Preparing to upload video...")
+                self.progress.emit(0, "Uploading video to server...")
+                
+                logger.info(f"Local video detected, uploading: {self.video_path}")
+                
+                # 上傳影片
+                server_path = self.client.upload_video_with_progress(
+                    self.video_path,
+                    progress_callback=lambda p, m: self.upload_progress.emit(p, m)
+                )
+                
+                if server_path is None:
+                    self.error.emit("Failed to upload video to server")
+                    return
+                
+                if self._check_cancelled():
+                    self.cancelled.emit()
+                    return
+                
+                video_path_to_use = server_path
+                self._server_video_path = server_path  # 儲存供後續使用
+                logger.info(f"Upload complete, server path: {video_path_to_use}")
+                self.progress.emit(5, "Upload complete. Starting detection...")
+            
+            # =================================================================
+            # Step 1: 建立任務（使用 Server 端路徑）
+            # =================================================================
+            self.progress.emit(10, "Creating detection job...")
             
             self._task_id = self.client.create_video_detection_job(
-                video_path=self.video_path,
+                video_path=video_path_to_use,
                 prompt=self.prompt,
             )
             
@@ -302,9 +339,9 @@ class ServerVideoDetectionWorker(BaseServerWorker):
                 self.cancelled.emit()
                 return
             
-            # Step 2: 連接 WebSocket 監聽進度
-            self.progress.emit(10, "Connecting to server...")
-            
+            # =================================================================
+            # Step 2: 監聽進度
+            # =================================================================
             if WEBSOCKET_AVAILABLE:
                 self._run_with_websocket()
             else:
@@ -312,8 +349,8 @@ class ServerVideoDetectionWorker(BaseServerWorker):
             
         except Exception as e:
             import traceback
-            error_msg = f"{type(e).__name__}: {str(e)}\n{traceback.format_exc()}"
-            logger.error(f"Worker error: {error_msg}")
+            error_msg = f"{type(e).__name__}: {str(e)}"
+            logger.error(f"Worker error: {error_msg}\n{traceback.format_exc()}")
             self.error.emit(error_msg)
     
     def _run_with_websocket(self):
