@@ -406,14 +406,27 @@ class ServerVideoDetectionWorker(BaseServerWorker):
                     pass
                 
                 elif event_type == "completed":
+                    logger.info("=== Received completed event ===")
                     raw_result = event.get("result", {})
+                    logger.info(f"Raw result keys: {raw_result.keys() if raw_result else 'None'}")
+                    
                     self.progress.emit(100, "Completed!")
                     
                     # 反序列化結果
-                    deserialized = deserialize_results(raw_result)
+                    try:
+                        deserialized = deserialize_results(raw_result)
+                        logger.info(f"Deserialized {len(deserialized)} frames")
+                    except Exception as e:
+                        logger.error(f"Failed to deserialize results: {e}")
+                        import traceback
+                        traceback.print_exc()
+                        self.error.emit(f"Failed to deserialize results: {e}")
+                        return
                     
                     # 發送與 SAM3Worker 相容的格式
+                    logger.info("Emitting finished signal...")
                     self.finished.emit({"results": deserialized})
+                    logger.info("Finished signal emitted")
                     return
                 
                 elif event_type == "failed":
