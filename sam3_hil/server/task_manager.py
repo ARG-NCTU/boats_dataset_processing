@@ -173,13 +173,24 @@ class Task:
     
     def to_dict(self) -> dict:
         """轉換成 dict（給 API 回傳）"""
+        # 過濾 params 中的 numpy array（無法 JSON 序列化）
+        safe_params = {}
+        for key, value in self.params.items():
+            if isinstance(value, np.ndarray):
+                # 只保存形狀資訊
+                safe_params[key] = f"<ndarray shape={value.shape}>"
+            elif isinstance(value, (str, int, float, bool, list, dict, type(None))):
+                safe_params[key] = value
+            else:
+                safe_params[key] = str(value)
+        
         return {
             "task_id": self.task_id,
             "task_type": self.task_type.value,
             "status": self.status.value,
             "progress": self.progress,
             "message": self.message,
-            "params": self.params,
+            "params": safe_params,
             "result": self.result,
             "error": self.error,
             "created_at": self.created_at.isoformat(),
@@ -621,6 +632,13 @@ class TaskManager:
             # Step 6: 關閉 session
             engine.close_session(session_id)
             
+            # 清理 GPU 記憶體
+            import torch
+            import gc
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+            
             # Step 7: 轉換結果
             self._emit_progress(task, 95, "Preparing results...")
             
@@ -630,7 +648,7 @@ class TaskManager:
             # 完成
             self._complete_task(task, TaskStatus.COMPLETED, result={
                 "total_frames": len(all_results),
-                "frames": serializable_results,
+                "results": serializable_results,  # 與 SAM3Worker 相容
             })
             
         except Exception as e:
@@ -714,6 +732,25 @@ class TaskManager:
         """
         執行 mask 傳播
         """
+        import torch
+        import gc
+        from pycocotools import mask as mask_utils
+        
+        # 強制徹底清理 GPU 記憶體
+        logger.info("Cleaning GPU memory before propagate...")
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            torch.cuda.synchronize()
+            # 再次清理
+            gc.collect()
+            torch.cuda.empty_cache()
+            
+            # 記錄當前記憶體狀態
+            allocated = torch.cuda.memory_allocated() / 1024**3
+            reserved = torch.cuda.memory_reserved() / 1024**3
+            logger.info(f"GPU memory: {allocated:.2f} GiB allocated, {reserved:.2f} GiB reserved")
+        
         params = task.params
         video_path = params["video_path"]
         start_frame = params["start_frame"]
@@ -745,11 +782,22 @@ class TaskManager:
             progress_callback=progress_callback,
         )
         
+        # 把 mask 用 RLE 編碼
+        self._emit_progress(task, 95, "Encoding results...")
+        encoded_results = {}
+        for frame_idx, frame_mask in results.items():
+            mask_fortran = np.asfortranarray(frame_mask.astype(np.uint8))
+            rle = mask_utils.encode(mask_fortran)
+            encoded_results[str(frame_idx)] = {
+                "counts": rle["counts"].decode("utf-8") if isinstance(rle["counts"], bytes) else rle["counts"],
+                "size": rle["size"],
+            }
+        
         # 完成
         self._complete_task(task, TaskStatus.COMPLETED, result={
             "num_frames": len(results),
-            # mask 太大，不直接回傳，存在 server 端
             "frame_indices": list(results.keys()),
+            "masks": encoded_results,  # RLE 編碼的 mask
         })
     
     def _run_refine(self, task: Task):
@@ -789,21 +837,35 @@ class TaskManager:
     # =========================================================================
     
     def _serialize_frame_result(self, frame_result) -> dict:
-        """把 FrameResult 轉成可 JSON 序列化的格式"""
+        """把 FrameResult 轉成可 JSON 序列化的格式（使用 RLE 編碼 mask）"""
+        from pycocotools import mask as mask_utils
+        
+        detections_data = []
+        for d in frame_result.detections:
+            det_dict = {
+                "obj_id": d.obj_id,
+                "score": float(d.score),
+                "bbox": d.box.tolist() if hasattr(d.box, 'tolist') else list(d.box),
+                "bbox_xyxy": d.box_xyxy.tolist() if hasattr(d.box_xyxy, 'tolist') else list(d.box_xyxy),
+            }
+            
+            # RLE 編碼 mask
+            if d.mask is not None:
+                # 確保 mask 是 Fortran order（pycocotools 要求）
+                mask_fortran = np.asfortranarray(d.mask.astype(np.uint8))
+                rle = mask_utils.encode(mask_fortran)
+                # RLE 的 counts 是 bytes，需要轉成 string
+                det_dict["mask_rle"] = {
+                    "counts": rle["counts"].decode("utf-8") if isinstance(rle["counts"], bytes) else rle["counts"],
+                    "size": rle["size"],
+                }
+            
+            detections_data.append(det_dict)
+        
         return {
             "frame_index": frame_result.frame_index,
             "num_objects": frame_result.num_objects,
-            "detections": [
-                {
-                    "obj_id": d.obj_id,
-                    "score": float(d.score),
-                    "bbox": d.box.tolist() if hasattr(d.box, 'tolist') else list(d.box),
-                    "bbox_xyxy": d.box_xyxy.tolist() if hasattr(d.box_xyxy, 'tolist') else list(d.box_xyxy),
-                    # mask 太大，不直接序列化
-                    "mask_shape": list(d.mask.shape) if d.mask is not None else None,
-                }
-                for d in frame_result.detections
-            ]
+            "detections": detections_data,
         }
     
     def _serialize_video_results(self, all_results: dict) -> dict:
@@ -822,13 +884,42 @@ _task_manager: Optional[TaskManager] = None
 _task_manager_lock = threading.Lock()
 
 
-def get_task_manager() -> TaskManager:
-    """取得全局 TaskManager 實例"""
+def get_task_manager(sam3_engine=None) -> TaskManager:
+    """
+    取得全局 TaskManager 實例
+    
+    Args:
+        sam3_engine: 可選，SAM3Engine 實例。只在第一次呼叫時有效。
+        
+    Returns:
+        TaskManager 實例
+    """
     global _task_manager
     
     with _task_manager_lock:
         if _task_manager is None:
-            _task_manager = TaskManager()
+            _task_manager = TaskManager(sam3_engine=sam3_engine)
+        return _task_manager
+
+
+def init_task_manager(sam3_engine=None) -> TaskManager:
+    """
+    初始化全局 TaskManager（用於 server 啟動時）
+    
+    Args:
+        sam3_engine: SAM3Engine 實例
+        
+    Returns:
+        TaskManager 實例
+    """
+    global _task_manager
+    
+    with _task_manager_lock:
+        if _task_manager is not None:
+            logger.warning("TaskManager already initialized, returning existing instance")
+            return _task_manager
+        
+        _task_manager = TaskManager(sam3_engine=sam3_engine)
         return _task_manager
 
 
