@@ -698,7 +698,10 @@ class ExportDialog(QDialog):
         dir_layout.setContentsMargins(0, 0, 0, 0)
         dir_widget.setLayout(dir_layout)
         
-        self.dir_input = QLineEdit("/app/data/output")
+        # 預設輸出目錄：使用用戶的 home 目錄
+        import os
+        default_output_dir = os.path.expanduser("~/data/output")
+        self.dir_input = QLineEdit(default_output_dir)
         dir_layout.addWidget(self.dir_input)
         
         browse_btn = QPushButton("Browse...")
@@ -2514,6 +2517,8 @@ class HILAAMainWindow(QMainWindow):
         
         # 取得影片路徑（確保是字串）
         video_path = str(self.video_loader.video_path)
+        # 儲存原始本地路徑（供 export 使用）
+        self._original_video_path = video_path
         logger.info(f"Starting video detection: video={video_path}, prompt={prompt}, mode={mode}")
         
         # === ActionLogger: 記錄偵測開始 ===
@@ -2862,6 +2867,11 @@ class HILAAMainWindow(QMainWindow):
         
         self.sam3_results = result["results"]
         
+        # 儲存 Server 端的影片路徑（供後續 propagate 使用）
+        if "server_video_path" in result and result["server_video_path"]:
+            self._server_video_path = result["server_video_path"]
+            logger.info(f"Stored server video path: {self._server_video_path}")
+
         # Maritime ROI 後處理：過濾天空區域內的物件
         if self.maritime_roi_checkbox.isChecked() and self.horizon_result and self.horizon_result.valid:
             self._filter_sky_objects()
@@ -3536,7 +3546,8 @@ class HILAAMainWindow(QMainWindow):
         config = ExportConfig(
             output_dir=Path(output_dir),
             base_name=dataset_name,
-            video_path=str(self.video_loader.video_path),
+            # 使用原始本地路徑（而非 Server 路徑）
+            video_path=getattr(self, '_original_video_path', str(self.video_loader.video_path)),
             video_fps=video_fps,
             video_width=self.video_loader.metadata.width,
             video_height=self.video_loader.metadata.height,
@@ -4152,8 +4163,14 @@ class HILAAMainWindow(QMainWindow):
             # 檢查是否支援 video propagation
             if hasattr(self.sam3_engine, 'propagate_mask'):
                 # 使用 SAM3 video predictor
+                # Server 模式使用上傳後的路徑，本地模式使用原始路徑
+                if self._execution_mode == "server" and hasattr(self, '_server_video_path') and self._server_video_path:
+                    video_path_for_propagate = self._server_video_path
+                else:
+                    video_path_for_propagate = str(self.video_loader.video_path)
+                
                 results = self.sam3_engine.propagate_mask(
-                    video_path=str(self.video_loader.video_path),
+                    video_path=video_path_for_propagate,
                     start_frame=start_frame,
                     mask=mask,
                     points=points,
