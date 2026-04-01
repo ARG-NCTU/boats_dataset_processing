@@ -137,7 +137,11 @@ class TaskEvent:
         if self.progress_message is not None:
             result["message"] = self.progress_message
         if self.data is not None:
-            result["data"] = self.data
+            # completed 事件使用 "result"，其他事件使用 "data"
+            if self.event_type == EventType.COMPLETED:
+                result["result"] = self.data
+            else:
+                result["data"] = self.data
         if self.error_message is not None:
             result["error"] = self.error_message
             
