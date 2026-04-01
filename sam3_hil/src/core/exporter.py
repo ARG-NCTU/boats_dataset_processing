@@ -47,8 +47,13 @@ import numpy as np
 try:
     from datasets import Dataset, Features, Value, Image, Sequence
     HAS_HF_DATASETS = True
-except ImportError:
+    print("[DEBUG] datasets import SUCCESS")
+except ImportError as e:
     HAS_HF_DATASETS = False
+    print(f"[DEBUG] datasets import FAILED: {e}")
+except Exception as e:
+    HAS_HF_DATASETS = False
+    print(f"[DEBUG] datasets import ERROR: {type(e).__name__}: {e}")
 
 # Optional: PIL for image handling
 try:
@@ -743,11 +748,17 @@ class AnnotationExporter:
         Returns:
             ExportStats
         """
+        print(f"[DEBUG] HAS_HF_DATASETS = {HAS_HF_DATASETS}")
+        print(f"[DEBUG] formats = {formats}")
+        print(f"[DEBUG] output_dir = {self.config.output_dir}")
+
         if formats is None:
             formats = ["coco", "labelme"]
             if HAS_HF_DATASETS:
                 formats.append("parquet")
         
+        print(f"[DEBUG] final formats = {formats}")
+
         # Default object_labels: all objects get first category
         if object_labels is None:
             object_labels = {}
