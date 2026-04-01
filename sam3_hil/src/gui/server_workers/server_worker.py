@@ -390,9 +390,19 @@ class ServerVideoDetectionWorker(BaseServerWorker):
                     self.progress.emit(45, f"Found {num_objects} objects. Waiting for confirmation...")
                     self.ready_to_propagate.emit(num_objects, data)
                     
-                    # 等待確認或取消
+                    # 等待確認或取消（使用超時等待，每 10 秒發送 ping 保持連接）
                     logger.info("Waiting for user confirmation...")
-                    self._confirm_event.wait()
+                    while not self._confirm_event.wait(timeout=10.0):
+                        if self._cancelled:
+                            self.cancelled.emit()
+                            return
+                        # 發送 ping 保持連接
+                        try:
+                            ws.send('{"action": "ping"}')
+                            logger.debug("Sent ping to keep WebSocket alive")
+                        except Exception as e:
+                            logger.warning(f"Failed to send ping: {e}")
+                            break
                     
                     if self._cancelled:
                         self.cancelled.emit()
