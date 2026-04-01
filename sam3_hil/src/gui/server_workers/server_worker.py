@@ -424,8 +424,12 @@ class ServerVideoDetectionWorker(BaseServerWorker):
                         return
                     
                     # 發送與 SAM3Worker 相容的格式
+                    # 包含 server_video_path 供後續 propagate 使用
                     logger.info("Emitting finished signal...")
-                    self.finished.emit({"results": deserialized})
+                    self.finished.emit({
+                        "results": deserialized,
+                        "server_video_path": getattr(self, '_server_video_path', None),
+                    })
                     logger.info("Finished signal emitted")
                     return
                 
