@@ -20,6 +20,7 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(SPECPATH).resolve()
 
+
 a = Analysis(
     ['main_server.py'],
     
@@ -61,15 +62,24 @@ a = Analysis(
         # ----- pycocotools -----
         'pycocotools',
         'pycocotools.mask',
-	'pycocotools.coco',
+	    'pycocotools.coco',
         'pycocotools._mask',
 
-	# ----- parquet -----
-	'pyarrow',
-	'pyarrow.parquet',
-	'datasets',
-	'datasets.arrow_dataset',
+        # ----- parquet -----
+        'pyarrow',
+        'pyarrow.parquet',
+        'pyarrow.lib',
+        'datasets',
+        'datasets.arrow_dataset',
     	'datasets.features',
+	    'pandas',
+        'pandas.core',
+        'pandas.core.frame',
+        'pandas.core.series',
+        'pandas.core.arrays',
+        'pandas._libs',
+        'pandas._libs.lib',
+        'pandas.io',
         
         # ----- 網路 -----
         'requests',
@@ -79,7 +89,7 @@ a = Analysis(
         
         # ----- 日誌 -----
         'loguru',
-	'mcap',
+	    'mcap',
         
         # ----- configs/ -----
         'configs',
@@ -123,9 +133,9 @@ a = Analysis(
         
         # ----- src/utils/ -----
         'src.utils',
-    ],
+    ] ,
     
-    hookspath=[],
+    hookspath=['./hooks'],
     hooksconfig={},
     runtime_hooks=[],
     
@@ -147,10 +157,8 @@ a = Analysis(
         'tensorflow',
         'keras',
         'matplotlib',
-        'pandas',
         'scipy',
         'sklearn',
-        'pytest',
         'IPython',
         'jupyter',
     ],
