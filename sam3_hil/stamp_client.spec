@@ -61,7 +61,15 @@ a = Analysis(
         # ----- pycocotools -----
         'pycocotools',
         'pycocotools.mask',
+	'pycocotools.coco',
         'pycocotools._mask',
+
+	# ----- parquet -----
+	'pyarrow',
+	'pyarrow.parquet',
+	'datasets',
+	'datasets.arrow_dataset',
+    	'datasets.features',
         
         # ----- 網路 -----
         'requests',
@@ -71,6 +79,7 @@ a = Analysis(
         
         # ----- 日誌 -----
         'loguru',
+	'mcap',
         
         # ----- configs/ -----
         'configs',
