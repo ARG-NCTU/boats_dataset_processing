@@ -102,14 +102,16 @@ def main():
         from src.gui.startup_dialog import StartupDialog, ExecutionMode
         
         dialog = StartupDialog(skip_if_remembered=args.skip_dialog)
-        
-        if dialog.exec() != 1:  # QDialog.DialogCode.Accepted = 1
-            logger.info("User cancelled startup dialog")
-            return 0
-        
-        config = dialog.get_config()
-        mode = config.mode
-        server_url = config.server_url
+        try:
+            if dialog.exec() != 1:  # QDialog.DialogCode.Accepted = 1
+                logger.info("User cancelled startup dialog")
+                return 0
+
+            config = dialog.get_config()
+            mode = config.mode
+            server_url = config.server_url
+        finally:
+            dialog.deleteLater()
         
     elif args.mode == "local":
         from src.gui.startup_dialog import ExecutionMode
