@@ -106,7 +106,7 @@ def main():
             if dialog.exec() != 1:  # QDialog.DialogCode.Accepted = 1
                 logger.info("User cancelled startup dialog")
                 return 0
-            
+
             config = dialog.get_config()
             mode = config.mode
             server_url = config.server_url
