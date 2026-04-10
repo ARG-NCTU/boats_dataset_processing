@@ -38,7 +38,7 @@ from PyQt6.QtWidgets import (
     QMessageBox,
     QButtonGroup,
 )
-from PyQt6.QtGui import QFont, QIcon
+from PyQt6.QtGui import QFont, QIcon, QCloseEvent
 from loguru import logger
 
 
@@ -90,6 +90,9 @@ class ConnectionTestWorker(QThread):
     
     def run(self):
         try:
+            if self.isInterruptionRequested():
+                return
+
             # 動態導入避免循環依賴
             import sys
             from pathlib import Path
@@ -98,10 +101,16 @@ class ConnectionTestWorker(QThread):
             from src.api_client import StampAPIClient
             
             client = StampAPIClient(self.server_url, timeout=10)
+
+            if self.isInterruptionRequested():
+                return
             
             # 檢查連線
             if not client.check_connection():
                 self.finished.emit(False, "Cannot connect to server")
+                return
+
+            if self.isInterruptionRequested():
                 return
             
             # 取得狀態
@@ -138,6 +147,9 @@ class GPUCheckWorker(QThread):
     
     def run(self):
         try:
+            if self.isInterruptionRequested():
+                return
+
             import torch
             
             if torch.cuda.is_available():
@@ -201,6 +213,30 @@ class StartupDialog(QDialog):
         if self._should_skip:
             return QDialog.DialogCode.Accepted
         return super().exec()
+
+    def _stop_thread(self, thread: Optional[QThread], name: str) -> None:
+        """安全停止 QThread。"""
+        if not thread:
+            return
+
+        if thread.isRunning():
+            logger.info(f"Stopping {name} thread...")
+            thread.requestInterruption()
+            thread.quit()
+            if not thread.wait(1000):
+                logger.warning(f"{name} thread did not stop in time, terminating...")
+                thread.terminate()
+                thread.wait(500)
+
+        thread.deleteLater()
+
+    def _cleanup_workers(self) -> None:
+        """清理所有背景 worker。"""
+        self._stop_thread(self._gpu_worker, "GPUCheckWorker")
+        self._gpu_worker = None
+
+        self._stop_thread(self._connection_worker, "ConnectionTestWorker")
+        self._connection_worker = None
     
     def _init_ui(self):
         """Initialize UI."""
@@ -365,13 +401,20 @@ class StartupDialog(QDialog):
         """Check local GPU."""
         self._local_status.setText("Detecting...")
         self._local_status.setStyleSheet("color: gray; margin-left: 20px;")
-        
+
+        # 避免重複啟動 GPU worker
+        self._stop_thread(self._gpu_worker, "GPUCheckWorker")
         self._gpu_worker = GPUCheckWorker()
         self._gpu_worker.finished.connect(self._on_gpu_check_finished)
+        self._gpu_worker.finished.connect(self._gpu_worker.deleteLater)
         self._gpu_worker.start()
     
     def _on_gpu_check_finished(self, has_gpu: bool, message: str):
         """GPU 檢測完成"""
+        sender = self.sender()
+        if sender is self._gpu_worker:
+            self._gpu_worker = None
+
         if has_gpu:
             self._local_status.setText(f"✓ {message}")
             self._local_status.setStyleSheet("color: green; margin-left: 20px;")
@@ -381,6 +424,10 @@ class StartupDialog(QDialog):
             self._local_status.setStyleSheet("color: red; margin-left: 20px;")
             # 不禁用，讓用戶自己決定
             # self._local_radio.setEnabled(False)
+
+        self._gpu_worker = None
+        if worker is not None:
+            worker.deleteLater()
     
     def _on_test_connection(self):
         """測試連線"""
@@ -400,13 +447,20 @@ class StartupDialog(QDialog):
         self._test_button.setText("Testing...")
         self._server_status.setText("Connecting...")
         self._server_status.setStyleSheet("color: gray;")
-        
+
+        # 避免重複啟動連線測試 worker
+        self._stop_thread(self._connection_worker, "ConnectionTestWorker")
         self._connection_worker = ConnectionTestWorker(url)
         self._connection_worker.finished.connect(self._on_connection_test_finished)
+        self._connection_worker.finished.connect(self._connection_worker.deleteLater)
         self._connection_worker.start()
     
     def _on_connection_test_finished(self, success: bool, message: str):
         """連線測試完成"""
+        sender = self.sender()
+        if sender is self._connection_worker:
+            self._connection_worker = None
+
         self._test_button.setEnabled(True)
         self._test_button.setText("Test Connection")
         
@@ -416,6 +470,10 @@ class StartupDialog(QDialog):
         else:
             self._server_status.setText(f"✗ {message}")
             self._server_status.setStyleSheet("color: red;")
+
+        self._connection_worker = None
+        if worker is not None:
+            worker.deleteLater()
     
     def _on_start(self):
         """按下啟動按鈕"""
@@ -441,9 +499,27 @@ class StartupDialog(QDialog):
         
         # 儲存設定
         self._save_settings(self._config)
-        
+
+        # 避免 dialog 關閉時 thread 仍在執行
+        self._cleanup_workers()
+
         # 接受對話框
         self.accept()
+
+    def accept(self):
+        """覆寫 accept，確保 worker 已被清理。"""
+        self._cleanup_workers()
+        super().accept()
+
+    def reject(self):
+        """覆寫 reject，確保 worker 已被清理。"""
+        self._cleanup_workers()
+        super().reject()
+
+    def closeEvent(self, event: QCloseEvent):
+        """視窗關閉時確保 worker 已被清理。"""
+        self._cleanup_workers()
+        super().closeEvent(event)
     
     def get_config(self) -> Optional[StartupConfig]:
         """取得設定"""
