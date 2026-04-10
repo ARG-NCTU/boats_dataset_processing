@@ -90,6 +90,9 @@ class ConnectionTestWorker(QThread):
     
     def run(self):
         try:
+            if self.isInterruptionRequested():
+                return
+
             # 動態導入避免循環依賴
             import sys
             from pathlib import Path
@@ -98,10 +101,16 @@ class ConnectionTestWorker(QThread):
             from src.api_client import StampAPIClient
             
             client = StampAPIClient(self.server_url, timeout=10)
+
+            if self.isInterruptionRequested():
+                return
             
             # 檢查連線
             if not client.check_connection():
                 self.finished.emit(False, "Cannot connect to server")
+                return
+
+            if self.isInterruptionRequested():
                 return
             
             # 取得狀態
@@ -138,6 +147,9 @@ class GPUCheckWorker(QThread):
     
     def run(self):
         try:
+            if self.isInterruptionRequested():
+                return
+
             import torch
             
             if torch.cuda.is_available():
@@ -412,6 +424,10 @@ class StartupDialog(QDialog):
             self._local_status.setStyleSheet("color: red; margin-left: 20px;")
             # 不禁用，讓用戶自己決定
             # self._local_radio.setEnabled(False)
+
+        self._gpu_worker = None
+        if worker is not None:
+            worker.deleteLater()
     
     def _on_test_connection(self):
         """測試連線"""
@@ -454,6 +470,10 @@ class StartupDialog(QDialog):
         else:
             self._server_status.setText(f"✗ {message}")
             self._server_status.setStyleSheet("color: red;")
+
+        self._connection_worker = None
+        if worker is not None:
+            worker.deleteLater()
     
     def _on_start(self):
         """按下啟動按鈕"""
