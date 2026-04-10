@@ -500,9 +500,6 @@ class StartupDialog(QDialog):
         # 儲存設定
         self._save_settings(self._config)
 
-        # 避免 dialog 關閉時 thread 仍在執行
-        self._cleanup_workers()
-
         # 接受對話框
         self.accept()
 
