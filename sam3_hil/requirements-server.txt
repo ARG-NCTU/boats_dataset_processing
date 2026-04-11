@@ -1,0 +1,14 @@
+# STAMP Server Requirements
+# =========================
+# Install: pip install -r requirements-server.txt
+#
+# 這個檔案繼承原本的 requirements.txt，只加 Server 額外需要的
+
+# 繼承原本的 requirements
+-r requirements.txt
+
+# === Server 額外需要 ===
+fastapi>=0.109.0
+uvicorn[standard]>=0.27.0
+python-multipart>=0.0.6
+websockets>=12.0

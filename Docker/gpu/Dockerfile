@@ -137,6 +137,9 @@ RUN sed -i '/^sam:/,/^[^ ]/d' /home/arg/.labelmerc && \
       '  device: "cuda"' \
       >> /home/arg/.labelmerc
 
+##################################### OpenCV tools #####################################
+RUN pip3 install opencv-python numpy shapely
+
 ##################################### setting ###################################################
 
 RUN chown -R ${USER}:${USER} ${HOME}/

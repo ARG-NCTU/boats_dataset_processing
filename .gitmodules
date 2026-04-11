@@ -1,3 +1,12 @@
 [submodule "Panorama"]
 	path = Panorama
 	url = git@github.com:ARG-NCTU/Panorama.git
+[submodule "sam3_hil/third_party/sam3"]
+	path = sam3_hil/third_party/sam3
+	url = https://github.com/facebookresearch/sam3.git
+[submodule "tools/Track-Anything"]
+	path = tools/Track-Anything
+	url = https://github.com/gaomingqi/Track-Anything.git
+[submodule "tools/cvat"]
+	path = tools/cvat
+	url = https://github.com/cvat-ai/cvat.git
