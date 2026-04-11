@@ -383,7 +383,8 @@ python3 merge_json_unity.py \
   --rgb_thermal rgb \
   --boats_root_path Images \
   --boat_count_per_scene 2002 \
-  --output Boats1-22/coco_formatted_unity_rgb_data.json
+  --output Boats1-22/coco_formatted_unity_rgb_data.json \
+  --bbox_seg both
 """
 
 
