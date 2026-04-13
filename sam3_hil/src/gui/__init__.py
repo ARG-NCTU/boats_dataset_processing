@@ -1,5 +1,5 @@
 """
-GUI modules for HIL-AA system.
+GUI modules for STAMP Annotation System.
 """
 
 # 不自動導入，避免載入 torch
