@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# HIL-AA Maritime Annotation System - Docker Run Script
+# STAMP Annotation System - Docker Run Script
 # 可以用 source 或 ./ 執行
 # =============================================================================
 
