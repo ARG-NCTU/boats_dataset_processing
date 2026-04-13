@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-HIL-AA Export Module
+STAMP Export Module
 ====================
 
 Export annotation results to standard formats for training:
@@ -28,7 +28,6 @@ Output Structure:
         ├── frame_000000.json
         └── ...
 
-Author: Sonic (Maritime Robotics Lab, NYCU)
 """
 
 import json
@@ -105,7 +104,7 @@ class ExportConfig:
     
     # What to export
     include_rejected: bool = False      # Include rejected objects?
-    include_hil_fields: bool = True     # Include HIL-AA specific fields in COCO?
+    include_stamp_fields: bool = True     # Include STAMP specific fields in COCO?
     
     # Label settings
     label_name: str = "vessel"          # Label name for annotations
@@ -136,7 +135,7 @@ class ExportConfig:
             raise ValueError(f"Split ratios must sum to 1.0, got {total}")
         # Auto-generate categories if not provided
         if self.categories is None:
-            self.categories = [{"id": 0, "name": self.label_name, "supercategory": "maritime"}]
+            self.categories = [{"id": 0, "name": self.label_name, "supercategory": "object"}]
 
 
 @dataclass
@@ -586,8 +585,8 @@ class COCOExporter:
                     "iscrowd": 0
                 }
                 
-                # Add HIL-AA specific fields (optional)
-                if self.config.include_hil_fields:
+                # Add STAMP specific fields (optional)
+                if self.config.include_stamp_fields:
                     annotation["score"] = float(det.score)
                     annotation["review_status"] = status
                     annotation["obj_id"] = det.obj_id
@@ -599,10 +598,10 @@ class COCOExporter:
     
     def _build_info(self) -> Dict:
         return {
-            "description": "HIL-AA Maritime Annotation",
+            "description": "STAMP Annotation",
             "version": "1.0",
             "year": datetime.now().year,
-            "contributor": "HIL-AA System",
+            "contributor": "STAMP System",
             "date_created": datetime.now().isoformat(),
             "video_source": self.config.video_path or "unknown"
         }
@@ -610,7 +609,7 @@ class COCOExporter:
     def _build_categories(self) -> List[Dict]:
         if self.config.categories:
             return self.config.categories
-        return [{"id": 0, "name": "vessel", "supercategory": "maritime"}]
+        return [{"id": 0, "name": "vessel", "supercategory": "object"}]
 
 
 # =============================================================================
@@ -943,7 +942,7 @@ def main():
     )
     
     print("="*60)
-    print("HIL-AA Export Module Test")
+    print("STAMP Export Module Test")
     print("="*60)
     
     print(f"\n✓ HuggingFace datasets: {'Available' if HAS_HF_DATASETS else 'Not available'}")
@@ -986,7 +985,7 @@ def main():
         video_height=480,
         video_fps=30.0,
         include_rejected=False,
-        include_hil_fields=True,
+        include_stamp_fields=True,
         train_ratio=0.8,
         val_ratio=0.1,
         test_ratio=0.1

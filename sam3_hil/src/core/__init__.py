@@ -1,5 +1,5 @@
 """
-Core modules for HIL-AA system.
+Core modules for STAMP Annotation System.
 
 - video_loader: Video I/O and frame extraction
 - horizon_detector: Maritime horizon line detection
