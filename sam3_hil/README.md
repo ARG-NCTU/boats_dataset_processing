@@ -111,6 +111,7 @@ git clone --recursive git@github.com:ARG-NCTU/boats_dataset_processing.git
 cd boats_dataset_processing/sam3_hil
 
 # 2. Create virtual environment and install dependencies
+sudo apt install libxcb-cursor0
 python3 -m venv venv
 source venv/bin/activate
 pip install pyinstaller
