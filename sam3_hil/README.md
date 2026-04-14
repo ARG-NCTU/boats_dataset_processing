@@ -1,431 +1,393 @@
-# STAMP Annotation System
+# STAMP — SAM Tracking Annotation with Minimal Processing
 
-> **SAM Tracking Annotation with Minimal Processing:**  
-> Leveraging SAM 3 Presence Confidence for Efficient Maritime Video Annotation
+> Leveraging SAM 3 Presence Confidence for Efficient Human-in-the-Loop Video Annotation
 
 [![Python](https://img.shields.io/badge/Python-3.12-blue.svg)](https://www.python.org/)
 [![PyQt6](https://img.shields.io/badge/GUI-PyQt6-green.svg)](https://www.riverbankcomputing.com/software/pyqt/)
 [![SAM 3](https://img.shields.io/badge/Model-SAM%203-orange.svg)](https://github.com/facebookresearch/sam3)
 [![License](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-## 🎯 Core Concept
+---
 
-**「用 AI 信心分數來指揮人類，達成極致的標註效率。」**
+## Core Concept
 
-This system transforms annotation from a labor-intensive process into an efficient human-in-the-loop workflow:
+STAMP transforms annotation from a labor-intensive process into an efficient human-in-the-loop workflow:
 
 ```
-┌─────────────┐    ┌──────────────┐    ┌─────────────────┐    ┌──────────────┐
-│  SAM 3      │ →  │  Presence    │ →  │  Confidence     │ →  │  Human       │
-│  Zero-Shot  │    │  Score       │    │  Classification │    │  Review      │
-│  Discovery  │    │  Extraction  │    │  HIGH/UNC/LOW   │    │  (if needed) │
-└─────────────┘    └──────────────┘    └─────────────────┘    └──────────────┘
+SAM 3 Zero-Shot   →   Presence Score   →   Confidence        →   Human Review
+Discovery               Extraction          Classification         (if needed)
+                                            HIGH / UNC / LOW
 ```
 
-1. **SAM 3** searches for all objects matching text prompts (e.g., "ship, buoy")
+1. **SAM 3** detects all objects matching text prompts (e.g., `"ship, buoy"`)
 2. **Presence Score** classifies each detection's confidence
-3. **HIGH confidence** → Auto-accept (no human needed)
-4. **UNCERTAIN** → Queue for human review
-5. **LOW confidence** → Auto-reject or flag for review
-6. **Human reviewer** uses simple clicks to refine
+3. **HIGH** (≥ 0.80) → auto-accept, no human needed
+4. **UNCERTAIN** (0.50–0.80) → queue for human review
+5. **LOW** (< 0.50) → auto-reject or flag
+6. Human reviewer refines with simple point clicks
 
-**Result:** Human role shifts from "annotator" to "reviewer", achieving **5-10x efficiency improvement**.
-
----
-
-## 📊 System Architecture
-
-### Six Core Modules
-
-| Module | Name | Function | Status |
-|--------|------|----------|--------|
-| 1 | **Zero-Shot Discovery** | SAM3 text prompt detection | ✅ Complete |
-| 2 | **Confidence-Driven Active Learning** | Presence Score classification (HIGH/UNC/LOW) | ✅ Complete |
-| 3 | **Temporal Tracking + Jitter Detection** | Track objects across frames, detect failures | ✅ Complete |
-| 4 | **Interactive Refinement** | Point prompts for mask correction | ✅ Complete |
-| 5 | **Optimized GUI** | PyQt6 interface with Timeline visualization | ✅ Complete |
-| 6 | **Export Module** | Labelme / COCO / HuggingFace formats | ✅ Complete |
-| 7 | **Maritime ROI** (Optional) | Horizon detection to filter sky regions | ✅ Complete |
-
-### Confidence Classification
-
-```
-┌────────────────────────────────────────────────────────────┐
-│                    Presence Score                          │
-├──────────────┬──────────────────────┬─────────────────────┤
-│  HIGH ≥ 0.80 │  0.50 ≤ UNCERTAIN    │  LOW < 0.50         │
-│  🟢 Auto     │  🟡 Human Review     │  🔴 Auto-reject     │
-│  Accept      │  Required            │  or Flag            │
-└──────────────┴──────────────────────┴─────────────────────┘
-```
+**Result:** the human role shifts from *annotator* to *reviewer*.
 
 ---
 
-## 🚀 Quick Start
+## System Architecture
 
-### Prerequisites
+STAMP uses a **Client-Server** architecture:
 
-- **Hardware**: NVIDIA GPU with 24GB+ VRAM (RTX 4090 recommended)
-- **Software**: Docker with NVIDIA Container Toolkit
-- **Display**: X11 server (Linux) or XQuartz (macOS)
-- **Account**: HuggingFace with SAM 3 access
+```
+Client Machine(s)                    Server (Docker + GPU)
+┌─────────────────┐                ┌──────────────────────┐
+│ STAMP Client    │                │  Docker              │
+│ (PyQt6 GUI)     │     HTTP       │  ┌────────────────┐  │
+│        ↓        │ ─────────────► │  │  FastAPI        │  │
+│  api_client.py  │  192.168.x.x   │  │  (Uvicorn)      │  │
+└─────────────────┘     :8000      │  │       ↓         │  │
+                         WebSocket │  │  Task Manager   │  │
+Another Client           ◄───────► │  │       ↓         │  │
+┌─────────────────┐                │  │  SAM3 (GPU)     │  │
+│ STAMP Client    │     HTTP       │  └────────────────┘  │
+│ (PyQt6 GUI)     │ ─────────────► │                      │
+└─────────────────┘                └──────────────────────┘
+```
 
-### Clone Repository
+- **Server**: Docker container running FastAPI + SAM3 on GPU
+- **Client**: lightweight PyQt6 desktop app, no GPU required
+- Multiple annotators can share a single GPU server
+
+### Core Modules
+
+| # | Module | Function | Type |
+|---|--------|----------|------|
+| 1 | Zero-Shot Discovery | Text-prompt object detection via SAM3 PCS | Core |
+| 2 | Confidence-Guided Review | THREE-level classification (HIGH/UNC/LOW) | Core |
+| 3 | Temporal Tracking | Keyframe propagation via SAM3 video predictor | Core |
+| 4 | Interactive Refinement | Point-prompt mask correction | Core |
+| 5 | Optimized GUI | Timeline + keyboard shortcuts + batch operations | Core |
+| 6 | Export Module | COCO / Labelme / HuggingFace Parquet output | Core |
+| 7 | ActionLogger | Efficiency metrics tracking (TEO, EOR, CPO, SPF) | Core |
+| 8 | Jitter Detection | Tracking failure detection (scene-dependent, optional) | Auxiliary |
+| 9 | Maritime ROI | Horizon detection for sky filtering (scene-dependent, optional) | Auxiliary |
+
+---
+
+## Installation
+
+There are two ways to use STAMP:
+
+### Option A: Pre-built Client (Recommended for Annotators)
+
+Download the pre-built executable. No Python, GPU, or Docker needed on the client machine.
+
+**Requirements:**
+- Ubuntu 22.04+ (x86_64)
+- `libxcb-cursor0` system package
 
 ```bash
-# Clone with submodules
+# 1. Install system dependency
+sudo apt install libxcb-cursor0
+
+# 2. Extract the package
+tar -xzvf STAMP_Client_Linux.tar.gz
+
+# 3. Run
+./STAMP_Client/STAMP_Client
+```
+
+On startup, select **Remote Server** mode and enter the server URL (e.g., `http://192.168.0.114:8000`).
+
+> **Note:** The server must already be running. See [Server Setup](#server-setup) below.
+
+### Option B: Clone and Build (For Self-hosted Deployment)
+
+For cases where no pre-built executable is available, or you need to build on a different machine.
+
+**Requirements:**
+- Python 3.10+
+- Git
+
+```bash
+# 1. Clone with submodules
 git clone --recursive git@github.com:ARG-NCTU/boats_dataset_processing.git
 cd boats_dataset_processing/sam3_hil
 
-# Or initialize submodules if already cloned
-git submodule update --init --recursive
+# 2. Create virtual environment and install dependencies
+python3 -m venv venv
+source venv/bin/activate
+pip install pyinstaller
+pip install -r requirements-client.txt
+pip install cython pycocotools pydantic-settings
+
+# 3. Build
+./build_client.sh
+
+# 4. Deactivate virtual environment
+deactivate
+
+# 5. Run
+./dist/STAMP_Client/STAMP_Client
 ```
 
-### HuggingFace Setup
+To distribute the built package:
 
 ```bash
-# 1. Get token from: https://huggingface.co/settings/tokens
-# 2. Request SAM 3 access: https://huggingface.co/facebook/sam3
-# 3. Set environment variable:
+tar -czvf STAMP_Client_Linux.tar.gz -C dist STAMP_Client
+```
+
+> **Important:** PyInstaller binaries are tied to the glibc version of the build machine. Always build on the machine with the **oldest** glibc for maximum compatibility. Check with `ldd --version`.
+
+### Server Setup
+
+The server runs inside Docker with GPU access. Set this up on the machine with the NVIDIA GPU.
+
+**Requirements:**
+- NVIDIA GPU (24GB+ VRAM recommended)
+- Docker with [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html)
+- HuggingFace account with [SAM 3 access](https://huggingface.co/facebook/sam3)
+
+```bash
+# 1. Clone (if not already done)
+git clone --recursive git@github.com:ARG-NCTU/boats_dataset_processing.git
+cd boats_dataset_processing/sam3_hil
+
+# 2. Set HuggingFace token (add to bashrc for persistence)
 echo 'export HF_TOKEN="hf_your_token_here"' >> ~/.bashrc
 source ~/.bashrc
+
+# 3. Start the server
+docker compose up
+
+# Server will be available at http://<server-ip>:8000
+# API docs at http://<server-ip>:8000/docs
 ```
 
-### Build & Run
+To verify the server is running:
 
 ```bash
-# Build Docker image
-./docker/docker_run.sh build
-
-# Run interactive shell
-./docker/docker_run.sh shell
-
-# Inside container - launch GUI
-python /app/src/gui/main_window.py
+curl http://<server-ip>:8000/health
+# Expected: {"status":"healthy","sam3":"loaded","task_manager":"ready"}
 ```
 
-### Demo
+### Development Mode (For Developers)
+
+To run the GUI directly inside the Docker container (for development and debugging):
 
 ```bash
-# Inside container
-# 1. Extract a frame from video
-ffmpeg -i /app/third_party/sam3/assets/videos/bedroom.mp4 -vframes 1 /app/data/output/bedroom_frame.jpg
+# 1. Start Docker container
+source docker/docker_run.sh
 
-# 2. Run SAM 3 demo
-python /app/src/demo.py --image /app/data/output/bedroom_frame.jpg --prompt "bed"
+# 2. Run inside the container
+python main_server.py
 ```
 
 ---
 
-## 📁 Project Structure
+## Usage
 
-```
-sam3_hil/
-├── docker/
-│   ├── Dockerfile              # Container definition
-│   └── docker_run.sh           # Launch script with X11 forwarding
-├── src/
-│   ├── demo.py                 # SAM 3 demo script
-│   ├── core/
-│   │   ├── video_loader.py         # Video loading with LRU cache
-│   │   ├── sam3_engine.py          # SAM 3 API wrapper + Tracker API
-│   │   ├── confidence_analyzer.py  # Presence Score analysis + HIR
-│   │   ├── jitter_detector.py      # Temporal quality control
-│   │   ├── exporter.py             # Multi-format export
-│   │   └── maritime_roi.py         # Horizon detection (Traditional/SegFormer)
-│   ├── gui/
-│   │   ├── main_window.py              # Main GUI (basic version)
-│   │   ├── main_window_with_maritime_roi.py  # GUI with Maritime ROI
-│   │   ├── interactive_canvas.py       # Click-to-refine canvas
-│   │   └── timeline_widget.py          # Jitter visualization
-│   └── utils/
-├── tests/
-│   └── test_vram_estimation.py     # VRAM testing tools
-├── data/
-│   ├── video/                  # Input videos
-│   └── output/                 # Exported annotations
-├── models/
-│   └── Segformer/              # SegFormer model for horizon detection
-├── third_party/
-│   └── sam3/                   # SAM 3 submodule
-├── requirements.txt
-└── README.md
-```
+### Workflow
 
----
-
-## 💾 VRAM Requirements
-
-### Empirical Formula
-
-```
-VRAM (GB) ≈ 2.0 + 0.034 × frames × (resolution / 1080p)
-```
-
-### Reference Table (RTX 4090, 24GB)
-
-| Resolution | 200 frames | 400 frames | 500 frames | 600 frames |
-|------------|------------|------------|------------|------------|
-| 1920×1080  | ~8.8 GB    | ~15.6 GB   | ~19.0 GB   | ~22.4 GB ⚠️ |
-| 1280×720   | ~3.9 GB    | ~6.9 GB    | ~8.5 GB    | ~10.0 GB   |
-| 960×540    | ~2.2 GB    | ~3.8 GB    | ~4.8 GB    | ~5.6 GB    |
-
-### Safe Limits (24GB GPU)
-
-| Resolution | Max Frames | Video Duration @30fps |
-|------------|------------|----------------------|
-| 1080p      | ~580       | ~19 seconds          |
-| 720p       | ~1300      | ~43 seconds          |
-| 540p       | ~2900      | ~97 seconds          |
-
-### Processing Long Videos
-
-For videos exceeding VRAM limits:
-
-```bash
-# Option 1: Trim video
-ffmpeg -i input.mp4 -vframes 500 output_500f.mp4
-
-# Option 2: Reduce resolution
-ffmpeg -i input.mp4 -vf "scale=1280:720" output_720p.mp4
-
-# Option 3: Segment processing (recommended for long videos)
-# Process in 500-frame chunks and merge results
-```
-
----
-
-## ⚙️ Configuration
-
-### Confidence Thresholds
-
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `HIGH_THRESHOLD` | 0.80 | Score ≥ this → auto-accept (green) |
-| `LOW_THRESHOLD` | 0.50 | Score < this → auto-reject (red) |
-| `JITTER_IOU_THRESHOLD` | 0.85 | IoU < this → tracking failure |
-| `JITTER_AREA_THRESHOLD` | 0.15 | Area change > 15% → flag for review |
-
-### Environment Variables
-
-```bash
-# Override defaults
-export HIL_CONF_HIGH_THRESHOLD=0.85
-export HIL_CONF_LOW_THRESHOLD=0.55
-export HIL_SAM3_MOCK_MODE=true  # Development mode (no GPU)
-```
-
----
-
-## 🎮 GUI Controls
+1. **Start the server** (`docker compose up`)
+2. Open the client, connect to the server
+3. Load a video or image folder
+4. Enter a text prompt (e.g., `"ship, boat"`) and run detection
+5. SAM3 detects objects and classifies confidence
+6. Review flagged frames (yellow/red on timeline)
+7. Refine masks with point clicks if needed
+8. Export annotations (COCO / Labelme / HuggingFace Parquet)
 
 ### Keyboard Shortcuts
 
 | Key | Action |
 |-----|--------|
-| `Space` | Play / Pause video |
+| `Space` | Play / Pause |
 | `←` / `→` | Previous / Next frame |
 | `Home` / `End` | First / Last frame |
 | `Tab` | Jump to next review-needed frame |
-| `Enter` | Confirm current annotation |
 | `Ctrl+O` | Open video |
-| `Ctrl+S` | Save annotations |
 | `Ctrl+Q` | Quit |
 
 ### Mouse Controls
 
 | Input | Action |
 |-------|--------|
-| **Left Click** | Add positive point (this IS the object) |
-| **Right Click** | Add negative point (this is NOT the object) |
-| **Scroll** | Zoom in/out |
+| Left Click | Positive point — "this IS the object" |
+| Right Click | Negative point — "this is NOT the object" |
 
 ### Timeline Color Coding
 
 | Color | Meaning |
 |-------|---------|
-| 🟢 Green | HIGH confidence - auto-accepted |
-| 🟡 Yellow | UNCERTAIN - needs review |
-| 🔴 Red | LOW confidence or Jitter detected |
-| 🔵 Blue | User-edited frame |
+| Green | HIGH confidence — auto-accepted |
+| Yellow | UNCERTAIN — needs review |
+| Red | LOW confidence or jitter detected |
+| Blue | User-edited frame |
 
 ---
 
-## 📊 Performance Metrics
+## Export Formats
 
-### Target vs Traditional Methods
+| Format | Files | Use Case |
+|--------|-------|----------|
+| COCO JSON | `coco/annotations/instances_{split}.json` | Object detection / segmentation training |
+| Labelme JSON | `json_image/*.json` + images | Per-frame review and correction |
+| HuggingFace Parquet | `parquet/instances_{split}.parquet` | HuggingFace Datasets upload |
 
-| Metric | Traditional | HIL-AA Target | Description |
-|--------|-------------|---------------|-------------|
-| **SPF** | 60-120s | < 5s | Seconds per Frame |
-| **CPO** | 20+ | < 2 | Clicks per Object |
-| **HIR** | 100% | < 15% | Human Intervention Rate |
-| **mIoU** | 95%+ | > 90% | Annotation Quality |
+All formats support automatic train/val/test split (default 80/10/10).
 
-### Key Formulas
+---
 
-```python
-# Human Intervention Rate
-HIR = frames_needing_review / total_frames × 100%
+## Project Structure
 
-# Annotation Speedup
-Speedup = traditional_time / hil_aa_time
+```
+sam3_hil/
+├── server/                     # FastAPI backend (runs in Docker)
+│   ├── main.py                 # Server entry point
+│   ├── task_manager.py         # Job queue + GPU management
+│   └── routes/                 # API endpoints
+├── src/
+│   ├── api_client.py           # HTTP/WebSocket client
+│   ├── core/
+│   │   ├── sam3_engine.py      # SAM3 inference wrapper
+│   │   ├── confidence_analyzer.py  # Presence Score classification
+│   │   ├── action_logger.py    # Efficiency metrics (TEO, EOR, CPO, SPF)
+│   │   ├── exporter.py         # Multi-format export
+│   │   ├── video_loader.py     # Video/image I/O with LRU cache
+│   │   ├── jitter_detector.py  # Temporal quality control (optional)
+│   │   └── maritime_roi.py     # Horizon detection (optional)
+│   └── gui/
+│       ├── main_window_server.py   # Main GUI window
+│       ├── interactive_canvas.py   # Point-click refinement
+│       ├── timeline_widget.py      # Confidence timeline
+│       ├── startup_dialog.py       # Mode selection dialog
+│       └── server_workers/         # Background workers for server communication
+├── configs/config.py           # Pydantic-based configuration
+├── docker/
+│   ├── Dockerfile.server       # Server Docker image
+│   └── docker_run.sh           # Legacy standalone launcher
+├── main_server.py              # Client entry point
+├── docker-compose.yml          # Server deployment
+├── build_client.sh             # PyInstaller build script
+├── stamp_client.spec           # PyInstaller spec
+├── requirements.txt            # Full dependencies
+├── requirements-client.txt     # Client-only dependencies
+└── third_party/sam3/           # SAM3 Git submodule
 ```
 
 ---
 
-## 🔬 Key Innovations
+## VRAM Reference
 
-1. **Zero-Shot Discovery**: SAM 3 text prompts find all objects automatically
-2. **Confidence-Driven Active Learning**: Presence Score determines human involvement
-3. **Temporal Tracking + Jitter Detection**: Monitor shape changes to catch tracking failures
-4. **Interactive Refinement**: Simple click corrections, not polygon editing
-5. **Maritime ROI**: Horizon detection (Traditional + SegFormer) reduces sky false positives
-6. **Optimized GUI**: Color-coded timeline + keyboard shortcuts + batch operations
+SAM3 video processing is memory-intensive. Empirical formula:
 
----
-
-## 🌊 Maritime ROI Feature
-
-### Horizon Detection Methods
-
-| Method | Speed | Accuracy | Use Case |
-|--------|-------|----------|----------|
-| **Traditional** | Fast | Moderate | Real-time, clear horizon |
-| **SegFormer** | Slow | High | Complex scenes, accurate filtering |
-| **Auto** | Adaptive | High | Fallback strategy |
-
-### Usage
-
-```python
-from core.maritime_roi import MaritimeROI
-
-# Initialize
-roi = MaritimeROI(method='segformer', segformer_model_path='models/Segformer/segformer_model')
-
-# Detect horizon
-horizon = roi.detect_horizon(frame)
-# Returns: HorizonResult(slope=0.027, center=(960, 522), valid=True, method_used='segformer')
-
-# Get sky box for filtering
-sky_box = roi.get_sky_box_xyxy(frame, horizon)
-# Returns: [0, 0, 1920, 544] (pixels to exclude)
+```
+VRAM (GB) ≈ 2.0 + 0.034 × frames × (resolution / 1080p)
 ```
 
----
+| Resolution | 200 frames | 400 frames | 500 frames | Max safe (24GB GPU) |
+|------------|------------|------------|------------|---------------------|
+| 1920×1080  | ~8.8 GB    | ~15.6 GB   | ~19.0 GB   | ~580 frames         |
+| 1280×720   | ~3.9 GB    | ~6.9 GB    | ~8.5 GB    | ~1300 frames        |
+| 960×540    | ~2.2 GB    | ~3.8 GB    | ~4.8 GB    | ~2900 frames        |
 
-## 📤 Export Formats
+For videos exceeding VRAM limits:
 
-### Supported Formats
-
-| Format | Extension | Use Case |
-|--------|-----------|----------|
-| **Labelme** | `.json` | Manual review, polygon editing |
-| **COCO** | `.json` | Object detection training |
-| **HuggingFace** | Dataset | Direct upload to HF Hub |
-
-### Export Example
-
-```python
-from core.exporter import Exporter
-
-exporter = Exporter(output_dir='./output')
-
-# Export to Labelme format
-exporter.export_labelme(results, video_loader, 'annotations/')
-
-# Export to COCO format
-exporter.export_coco(results, video_loader, 'coco_annotations.json')
-```
-
----
-
-## ⚠️ Troubleshooting
-
-### Submodule is empty
 ```bash
-git submodule update --init --recursive
-```
+# Trim frames
+ffmpeg -i input.mp4 -vframes 500 output_500f.mp4
 
-### HuggingFace authentication error
-```bash
-# Check token
-echo $HF_TOKEN
-
-# Manual login
-huggingface-cli login
-```
-
-### CUDA out of memory
-```bash
-# Check current VRAM usage
-nvidia-smi
-
-# Solutions:
-# 1. Reduce frame count: ffmpeg -i input.mp4 -vframes 400 output.mp4
-# 2. Reduce resolution: ffmpeg -i input.mp4 -vf "scale=1280:720" output.mp4
-# 3. Restart application to clear GPU memory
-```
-
-### GUI not displaying (X11 error)
-```bash
-# On host machine
-xhost +local:docker
-
-# Then restart container
-./docker/docker_run.sh shell
-```
-
-### SegFormer model not found
-```bash
-# Inside container
-python /app/src/download_segformer_model.py -o /app/models/Segformer/segformer_model
+# Reduce resolution
+ffmpeg -i input.mp4 -vf "scale=1280:720" output_720p.mp4
 ```
 
 ---
 
-## 📚 References
+## Configuration
 
-### SAM 3
+Key parameters (adjustable in `configs/config.py` or via environment variables):
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `high_threshold` | 0.80 | Score ≥ this → auto-accept |
+| `low_threshold` | 0.50 | Score < this → auto-reject / flag |
+| `iou_threshold` | 0.85 | Jitter detection: IoU below this triggers review |
+| `area_change_threshold` | 0.15 | Jitter detection: area change above 15% triggers review |
+
+---
+
+## Troubleshooting
+
+**Server won't start / SAM3 not loading:**
+```bash
+docker compose logs -f              # Check server logs
+curl http://localhost:8000/status    # Check SAM3 and GPU status
+```
+
+**Client can't connect:**
+```bash
+# On server machine, find IP:
+hostname -I
+# On client, verify connectivity:
+curl http://<server-ip>:8000/health
+# If blocked, open port:
+sudo ufw allow 8000
+```
+
+**CUDA out of memory:**
+```bash
+# Restart the server to clear GPU state
+docker compose restart
+# Or reduce video size before processing
+```
+
+**Client crashes on startup (glibc error):**
+The pre-built client requires glibc ≥ the version on the build machine. Rebuild on the target machine or a machine with older glibc.
+
+**HuggingFace authentication:**
+```bash
+echo $HF_TOKEN                      # Verify token is set
+huggingface-cli login                # Manual login alternative
+```
+
+---
+
+## Efficiency Metrics
+
+STAMP tracks the following metrics via ActionLogger:
+
+| Metric | Full Name | Definition |
+|--------|-----------|------------|
+| **TEO** | Total Edit Operations | Total count of all edit actions (primary workload metric) |
+| **EOR** | Edit Operation Rate | TEO / total frames |
+| **FCR** | Frame Coverage Rate | Unique edited frames / total frames |
+| **CPO** | Clicks Per Object | Total clicks / unique objects |
+| **SPF** | Seconds Per Frame | Total annotation time / total frames |
+
+---
+
+## References
+
 - [SAM 3: Segment Anything with Concepts](https://arxiv.org/abs/2511.16719)
-- [Meta SAM 3 Blog](https://ai.meta.com/blog/segment-anything-model-3/)
-
-### Related Work
-- **SAM 2** (Meta, ICLR 2025) - 8.4× annotation speedup
-- **Cutie** (CVPR 2024) - 88.0% J&F on DAVIS 2017
-- **XMem++** (ICCV 2023) - 2× annotation efficiency
-- **MaskAL** (2022) - 82% labeling data reduction
-
-### Maritime Datasets
-- **MarineInst20M** (ECCV 2024) - 19.2M masks
-- **M2SODAI** (2023) - RGB + hyperspectral maritime detection
+- [SAM 2: Segment Anything in Images and Videos](https://arxiv.org/abs/2408.00714) — ICLR 2025
+- [Cutie: Putting the Object Back into Video Object Segmentation](https://arxiv.org/abs/2310.12982) — CVPR 2024
+- [XMem++: Production-level Video Segmentation](https://arxiv.org/abs/2307.15958) — ICCV 2023
 
 ---
 
-## 📜 License
-
-MIT License - Adam @ NYCU Assistive Robotics Group
-
----
-
-## 📖 Citation
-
-If you use this system in your research, please cite:
+## Citation
 
 ```bibtex
-@mastersthesis{AdamShihSTAMP,
-  title={基於 SAM 3 語義置信度與主動學習之海事影像人機協作標註系統},
-  author={Adam},
-  school={National Yang Ming Chiao Tung University},
-  year={2026},
-  note={Assistive Robotics Group}
+@mastersthesis{ShihSTAMP2026,
+  title   = {Efficiency-Driven Semi-Automated Data Engine:
+             Leveraging SAM 3 Presence Confidence for
+             Human-in-the-Loop Video Annotation},
+  author  = {Shih, Chih-Yuan},
+  school  = {National Yang Ming Chiao Tung University},
+  year    = {2026},
+  note    = {Assistive Robotics Group}
 }
 ```
 
 ---
 
-**Thesis Title:**  
-基於 SAM 3 語義置信度與主動學習之海事影像人機協作標註系統
+## License
 
-**English Title:**  
-Human-in-the-Loop Active Annotation System for Video Using SAM 3 Semantic Confidence and Active Learning
+MIT License — Adam Shih @ NYCU Assistive Robotics Group
