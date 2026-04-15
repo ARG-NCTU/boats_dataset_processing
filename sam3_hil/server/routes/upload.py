@@ -35,7 +35,10 @@ UPLOAD_DIR = Path("/app/uploads")
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 # 允許的影片副檔名
-ALLOWED_EXTENSIONS = {".mp4", ".avi", ".mov", ".mkv", ".webm"}
+ALLOWED_VIDEO_EXTENSIONS = {".mp4", ".avi", ".mov", ".mkv", ".webm"}
+
+# 允許的圖片副檔名
+ALLOWED_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".webp"}
 
 # 最大檔案大小（5GB）
 MAX_FILE_SIZE = 5 * 1024 * 1024 * 1024
@@ -140,10 +143,10 @@ async def upload_video(
     """
     # 檢查副檔名
     ext = Path(file.filename).suffix.lower()
-    if ext not in ALLOWED_EXTENSIONS:
+    if ext not in ALLOWED_VIDEO_EXTENSIONS:
         raise HTTPException(
             status_code=400,
-            detail=f"不支援的檔案格式: {ext}。允許的格式: {ALLOWED_EXTENSIONS}"
+            detail=f"不支援的檔案格式: {ext}。允許的格式: {ALLOWED_VIDEO_EXTENSIONS}"
         )
     
     # 清理並生成唯一檔名
@@ -200,6 +203,35 @@ async def upload_video(
         logger.error(f"Upload failed: {e}")
         raise HTTPException(status_code=500, detail=f"上傳失敗: {str(e)}")
 
+@router.post("/image")
+async def upload_image(
+    file: UploadFile = File(...),
+):
+    """上傳單張圖片"""
+    ext = Path(file.filename).suffix.lower()
+    if ext not in ALLOWED_IMAGE_EXTENSIONS:
+        raise HTTPException(400, f"不支援的圖片格式: {ext}")
+
+    safe_filename = sanitize_filename(file.filename)
+    unique_filename = generate_unique_filename(safe_filename)
+    target_path = UPLOAD_DIR / unique_filename
+
+    total_size = 0
+    with open(target_path, "wb") as buffer:
+        while True:
+            chunk = await file.read(1024 * 1024)
+            if not chunk:
+                break
+            buffer.write(chunk)
+            total_size += len(chunk)
+
+    return UploadResponse(
+        success=True,
+        filename=unique_filename,
+        server_path=str(target_path),
+        size_bytes=total_size,
+        message="上傳成功",
+    )
 
 @router.get("/list", response_model=FileListResponse)
 async def list_uploaded_files():
@@ -270,3 +302,5 @@ async def clear_uploads():
     except Exception as e:
         logger.error(f"Failed to clear uploads: {e}")
         raise HTTPException(status_code=500, detail=f"清空失敗: {str(e)}")
+
+
