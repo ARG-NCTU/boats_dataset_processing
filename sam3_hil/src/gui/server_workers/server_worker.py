@@ -553,7 +553,7 @@ class ServerBatchDetectionWorker(BaseServerWorker):
     
     # 信號（覆寫）
     progress = pyqtSignal(int, int, str)  # (當前, 總數, 訊息)
-    image_result = pyqtSignal(int, dict)  # (索引, 結果)
+    image_result = pyqtSignal(int, object)  # (索引, 結果)
     finished = pyqtSignal(dict)
     
     def __init__(
