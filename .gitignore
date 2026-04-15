@@ -21,6 +21,9 @@ Boat_dataset_unity/coco_formatted_unity_thermal_data.json
 Boat_dataset_unity/process_info.txt
 Boat_dataset_unity/seg_image.png
 
+Boat_unity_example/
+Boat_unity_example_hf/
+
 real_boat_dataset/
 real_lifebuoy_dataset/
 real_lifebuoy_dataset_hf/
