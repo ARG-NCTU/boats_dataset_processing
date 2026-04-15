@@ -390,7 +390,7 @@ class TimelineCanvas(QWidget):
         
         # Frame number label
         painter.setBrush(QBrush(QColor(33, 33, 33)))
-        label = f"F{self.current_frame}"
+        label = f"F{self.current_frame + 1}"
         font = QFont("Arial", 8, QFont.Weight.Bold)
         painter.setFont(font)
         
