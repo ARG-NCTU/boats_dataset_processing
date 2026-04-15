@@ -567,7 +567,7 @@ class ObjectListItem(QWidget):
         
         # 物件資訊 - Independent 模式顯示幀號
         if self.frame_idx is not None:
-            info_text = f"[F{self.frame_idx}] Det {self.obj_id}: {self.score:.2f}"
+            info_text = f"[F{self.frame_idx + 1}] Det {self.obj_id}: {self.score:.2f}"
         else:
             info_text = f"Obj {self.obj_id}: {self.score:.2f}"
         self.info_label = QLabel(info_text)
@@ -1825,6 +1825,46 @@ class STAMPMainWindow(QMainWindow):
             source_obj_id: 來源物件 ID（將被刪除）
             target_obj_id: 目標物件 ID（保留）
         """
+        is_independent_mode = (self.processing_mode_combo.currentIndex() == 1)
+    
+        if is_independent_mode:
+            # Image 模式：只在當前幀合併
+            frame_result = self.sam3_results.get(self.current_frame)
+            if frame_result is None:
+                return
+            
+            source_det = None
+            source_idx = None
+            for i, det in enumerate(frame_result.detections):
+                if det.obj_id == source_obj_id:
+                    source_det = det
+                    source_idx = i
+            
+            if source_det is not None:
+                target_exists = any(d.obj_id == target_obj_id for d in frame_result.detections)
+                if target_exists:
+                    # 兩者都在，移除 source
+                    frame_result.detections.pop(source_idx)
+                else:
+                    # target 不在，改 source 的 id
+                    source_det.obj_id = target_obj_id
+            
+            # 更新 composite_key 狀態
+            old_key = f"F{self.current_frame}_{source_obj_id}"
+            if old_key in self.object_status:
+                del self.object_status[old_key]
+            
+            self.action_logger.log_merge_objects(
+                frame_idx=self.current_frame,
+                source_obj_id=source_obj_id,
+                target_obj_id=target_obj_id
+            )
+            
+            self._reanalyze_with_preserved_edits()
+            self._track_human_intervention(self.current_frame)
+            return
+
+        # Video 模式    
         # 先檢查當前幀是否兩者都有 mask
         current_frame_result = self.sam3_results.get(self.current_frame)
         if current_frame_result:
@@ -2009,6 +2049,17 @@ class STAMPMainWindow(QMainWindow):
         Returns:
             List of (obj_id, avg_score) tuples
         """
+        # Image 模式：只回傳當前幀的物件
+        is_independent_mode = (self.processing_mode_combo.currentIndex() == 1)
+        if is_independent_mode:
+            frame_result = self.sam3_results.get(self.current_frame)
+            if frame_result is None:
+                return []
+            return sorted(
+                [(det.obj_id, det.score) for det in frame_result.detections],
+                key=lambda x: x[1], reverse=True
+            )
+
         objects = []
         
         if self.video_analysis and self.video_analysis.object_summaries:
@@ -2077,6 +2128,8 @@ class STAMPMainWindow(QMainWindow):
             total = self.video_loader.metadata.total_frames
             self.frame_label.setText(f"{frame_idx + 1} / {total}")
             self.timeline_slider.setValue(frame_idx)
+            if self.processing_mode_combo.currentIndex() == 1:
+                self.update_object_list()
             return
         
         # 如果有偵測結果，疊加視覺化
@@ -2101,6 +2154,10 @@ class STAMPMainWindow(QMainWindow):
         total = self.video_loader.metadata.total_frames
         self.frame_label.setText(f"{frame_idx + 1} / {total}")
         self.timeline_slider.setValue(frame_idx)
+        # Image 模式切幀時刷新物件列表
+        if self.processing_mode_combo.currentIndex() == 1:
+            self.update_object_list()
+
         
         # 更新 Timeline 當前幀指示器
         if hasattr(self, 'timeline_widget'):
@@ -2622,9 +2679,11 @@ class STAMPMainWindow(QMainWindow):
     
     def on_batch_progress(self, current: int, total: int, message: str):
         """批次處理進度更新。"""
-        if hasattr(self, 'progress_dialog') and self.progress_dialog:
-            self.progress_dialog.setValue(current)
-            self.progress_dialog.setLabelText(message)
+        dialog = getattr(self, 'progress_dialog', None)
+        if dialog is None:
+            return
+        dialog.setLabelText(message)
+        dialog.setValue(current)
     
     def on_batch_image_result(self, frame_idx: int, frame_result):
         """單張圖片處理完成（即時回報）。"""
@@ -3263,44 +3322,38 @@ class STAMPMainWindow(QMainWindow):
                 self.object_status[obj_summary.obj_id] = "pending"
     
     def _update_object_list_independent(self):
-        """Independent 模式：顯示所有幀的所有物件。"""
+        """Independent 模式：只顯示當前幀的物件。"""
         if not self.sam3_results:
             return
         
-        # 收集所有幀的所有物件
-        all_detections = []  # [(frame_idx, obj_id, score), ...]
+        frame_result = self.sam3_results.get(self.current_frame)
+        if frame_result is None:
+            return
         
-        for frame_idx, frame_result in self.sam3_results.items():
-            for det in frame_result.detections:
-                all_detections.append((frame_idx, det.obj_id, det.score))
+        # 按分數排序
+        sorted_dets = sorted(frame_result.detections, key=lambda d: d.score, reverse=True)
         
-        # 按幀索引排序，然後按分數排序
-        all_detections.sort(key=lambda x: (x[0], -x[2]))
-        
-        for frame_idx, obj_id, score in all_detections:
-            category = self.analyzer.categorize(score)
-            composite_key = f"F{frame_idx}_{obj_id}"
+        for det in sorted_dets:
+            category = self.analyzer.categorize(det.score)
+            composite_key = f"F{self.current_frame}_{det.obj_id}"
             
-            # 建立列表項目
             item = QListWidgetItem()
             item_widget = ObjectListItem(
-                obj_id,
-                score,
+                det.obj_id,
+                det.score,
                 category,
-                frame_idx=frame_idx  # 傳遞幀索引
+                frame_idx=self.current_frame
             )
             item_widget.status_changed.connect(self.on_object_status_changed)
             
-            # 設置 property
-            item_widget.setProperty("obj_id", obj_id)
-            item_widget.setProperty("frame_idx", frame_idx)
+            item_widget.setProperty("obj_id", det.obj_id)
+            item_widget.setProperty("frame_idx", self.current_frame)
             item_widget.setProperty("composite_key", composite_key)
             
             item.setSizeHint(item_widget.sizeHint())
             self.object_list.addItem(item)
             self.object_list.setItemWidget(item, item_widget)
             
-            # 初始化狀態（如果尚未設定）
             if composite_key not in self.object_status:
                 self.object_status[composite_key] = "pending"
     
@@ -3552,7 +3605,7 @@ class STAMPMainWindow(QMainWindow):
             video_width=self.video_loader.metadata.width,
             video_height=self.video_loader.metadata.height,
             include_rejected=include_rejected,
-            include_hil_fields=include_hil_fields,
+            include_stamp_fields=include_stamp_fields,
             categories=categories,
             frame_step=frame_step,
             train_ratio=train_ratio,
