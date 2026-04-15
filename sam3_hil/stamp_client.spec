@@ -161,6 +161,7 @@ a = Analysis(
         'sklearn',
         'IPython',
         'jupyter',
+        'PyQt5',
     ],
     
     win_no_prefer_redirects=False,
