@@ -378,7 +378,16 @@ class StampAPIClient:
     # =========================================================================
     # 同步 API：圖片偵測
     # =========================================================================
-    
+    def upload_image(self, image_path: str) -> str:
+        """上傳圖片，回傳 server_path"""
+        with open(image_path, "rb") as f:
+            response = requests.post(
+                f"{self.base_url}/api/upload/image",
+                files={"file": (Path(image_path).name, f)},
+            )
+        response.raise_for_status()
+        return response.json()["server_path"]
+
     def detect_image(
         self,
         image: np.ndarray,
