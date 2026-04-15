@@ -571,11 +571,28 @@ class ServerBatchDetectionWorker(BaseServerWorker):
         try:
             total = len(self.image_paths)
             
-            # Step 1: 建立任務
+            # Step 1: 上傳圖片到 server
+            server_paths = []
+            # 用資料夾名稱作為 batch_name
+            batch_name = Path(self.image_paths[0]).parent.name if self.image_paths else ""
+            
+            for i, local_path in enumerate(self.image_paths):
+                if self._check_cancelled():
+                    self.cancelled.emit()
+                    return
+                self.progress.emit(i, total, f"Uploading {i+1}/{total}...")
+                try:
+                    server_path = self.client.upload_image(local_path, batch_name=batch_name)
+                    server_paths.append(server_path)
+                except Exception as e:
+                    self.error.emit(f"Failed to upload {Path(local_path).name}: {e}")
+                    return  # A: 上傳失敗直接中止
+            
+            # Step 2: 用 server 路徑建立任務
             self.progress.emit(0, total, "Creating batch detection job...")
             
             self._task_id = self.client.create_batch_detection_job(
-                image_paths=self.image_paths,
+                image_paths=server_paths,
                 prompt=self.prompt,
             )
             
@@ -585,7 +602,7 @@ class ServerBatchDetectionWorker(BaseServerWorker):
                 self.cancelled.emit()
                 return
             
-            # Step 2: 監聽進度
+            # Step 3: 監聽進度（不動）
             if WEBSOCKET_AVAILABLE:
                 self._run_with_websocket(total)
             else:

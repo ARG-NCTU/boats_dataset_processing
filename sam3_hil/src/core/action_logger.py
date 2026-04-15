@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-HIL-AA Action Logger
+STAMP Action Logger
 ====================
 
 記錄使用者標註操作，用於計算效率指標（HIR、CPO、SPF）。
@@ -758,7 +758,7 @@ class ActionLogger:
         
         # 註冊 schema
         self._mcap_schema_id = self._mcap_writer.register_schema(
-            name="hil_aa.UserAction",
+            name="stamp.UserAction",
             encoding="jsonschema",
             data=json.dumps({
                 "type": "object",
@@ -777,7 +777,7 @@ class ActionLogger:
         # 註冊 channel
         self._mcap_channel_id = self._mcap_writer.register_channel(
             schema_id=self._mcap_schema_id,
-            topic="/hil_aa/user_actions",
+            topic="/stamp/user_actions",
             message_encoding="json",
         )
         
@@ -951,7 +951,7 @@ class SessionAnalyzer:
         """產生分析報告"""
         lines = [
             "=" * 60,
-            "HIL-AA Session Analysis Report",
+            "STAMP Session Analysis Report",
             f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
             f"Total Sessions: {len(results)}",
             "=" * 60,

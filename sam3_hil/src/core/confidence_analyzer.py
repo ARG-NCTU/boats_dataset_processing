@@ -3,7 +3,7 @@
 Confidence Analyzer Module
 ==========================
 
-Core module for HIL-AA (Human-in-the-Loop Active Annotation) system.
+Core module for STAMP (Human-in-the-Loop Active Annotation) system.
 Analyzes SAM3 confidence scores to categorize detections and identify
 frames requiring human review.
 
@@ -239,7 +239,7 @@ class VideoAnalysis:
 
 class ConfidenceAnalyzer:
     """
-    Analyzes SAM3 confidence scores for HIL-AA annotation workflow.
+    Analyzes SAM3 confidence scores for STAMP annotation workflow.
     
     Key innovation: Uses confidence scores to minimize human effort
     by automatically accepting high-confidence detections and
@@ -488,7 +488,7 @@ class ConfidenceAnalyzer:
         """
         lines = [
             "=" * 70,
-            f"HIL-AA Confidence Analysis Report",
+            f"STAMP Confidence Analysis Report",
             f"Video: {video_name}",
             "=" * 70,
             "",

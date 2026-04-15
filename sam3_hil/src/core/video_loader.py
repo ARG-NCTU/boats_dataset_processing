@@ -4,7 +4,7 @@ Video and Image Loader Module
 =============================
 
 Provides efficient video/image loading, frame extraction, and navigation
-for the HIL-AA Maritime Annotation System.
+for the STAMP Annotation System.
 
 Features:
 - VideoLoader: Video file handling with random access

@@ -166,9 +166,9 @@ def main():
     
     # 啟動主視窗
     try:
-        from src.gui.main_window_server import HILAAMainWindow
+        from src.gui.main_window_server import STAMPMainWindow
         
-        window = HILAAMainWindow(
+        window = STAMPMainWindow(
             engine=engine,
             mode=mode.value,
             server_url=server_url if mode.value == "server" else None,

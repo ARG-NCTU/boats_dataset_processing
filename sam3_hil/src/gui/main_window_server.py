@@ -3,7 +3,7 @@
 STAMP Annotation GUI - Main Window
 ===================================
 
-Maritime Video Annotation Tool using SAM3 with confidence-based
+Video Annotation Tool using SAM3 with confidence-based
 Human-in-the-Loop active annotation.
 
 Main Components:
@@ -1119,7 +1119,7 @@ class ExportDialog(QDialog):
 # Main Window
 # =============================================================================
 
-class HILAAMainWindow(QMainWindow):
+class STAMPMainWindow(QMainWindow):
     """
     STAMP 標註工具主視窗。
     
@@ -3534,7 +3534,7 @@ class HILAAMainWindow(QMainWindow):
             frame_step = 1  # Export all frames
         
         # 建立 categories（從 labels 生成）
-        categories = [{"id": i, "name": label, "supercategory": "maritime"} for i, label in enumerate(labels)]
+        categories = [{"id": i, "name": label, "supercategory": "object"} for i, label in enumerate(labels)]
         
         # 建立 label_name -> category_id 的對應
         label_to_cat_id = {label: i for i, label in enumerate(labels)}
@@ -3624,10 +3624,9 @@ class HILAAMainWindow(QMainWindow):
         QMessageBox.about(
             self,
             "About STAMP",
-            "STAMP Maritime Annotation Tool\n\n"
-            "Human-in-the-Loop Active Annotation\n"
-            "for Maritime Video using SAM3\n\n"
-            "Author: Adam Shih\n"
+            "STAMP Annotation Tool\n\n"
+            "for Video using SAM3\n\n"
+            "Author: Adam Shih (scy.en13@gmail.com)\n"
             "Assistive Robotics Group, NYCU"
         )
     
@@ -4346,7 +4345,7 @@ def main():
     app.setStyle("Fusion")
     
     # 建立主視窗
-    window = HILAAMainWindow()
+    window = STAMPMainWindow()
     window.show()
     
     # 執行

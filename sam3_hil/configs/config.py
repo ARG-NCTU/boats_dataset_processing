@@ -1,5 +1,5 @@
 """
-HIL-AA Maritime Annotation System - Configuration
+STAMP Annotation System - Configuration
 =================================================
 
 All configurable parameters in one place.
@@ -56,7 +56,7 @@ class ConfidenceConfig(BaseSettings):
     # No explicit field needed, computed from high - low range
     
     class Config:
-        env_prefix = "HIL_CONF_"
+        env_prefix = "STAMP_CONF_"
 
 
 # =============================================================================
@@ -96,7 +96,7 @@ class TemporalConfig(BaseSettings):
     )
     
     class Config:
-        env_prefix = "HIL_TEMP_"
+        env_prefix = "STAMP_TEMP_"
 
 
 # =============================================================================
@@ -151,7 +151,7 @@ class SAM3Config(BaseSettings):
     )
     
     class Config:
-        env_prefix = "HIL_SAM3_"
+        env_prefix = "STAMP_SAM3_"
 
 
 # =============================================================================
@@ -196,7 +196,7 @@ class MaritimeConfig(BaseSettings):
     )
     
     class Config:
-        env_prefix = "HIL_MARITIME_"
+        env_prefix = "STAMP_MARITIME_"
 
 
 # =============================================================================
@@ -210,7 +210,7 @@ class GUIConfig(BaseSettings):
     # Window defaults
     window_width: int = Field(default=1600, ge=800)
     window_height: int = Field(default=900, ge=600)
-    window_title: str = Field(default="HIL-AA Maritime Annotation")
+    window_title: str = Field(default="STAMP Annotation")
     
     # Colors (RGB tuples as comma-separated strings for env compatibility)
     color_positive: Tuple[int, int, int] = Field(
@@ -239,7 +239,7 @@ class GUIConfig(BaseSettings):
     default_fps: int = Field(default=30, ge=1, le=120)
     
     class Config:
-        env_prefix = "HIL_GUI_"
+        env_prefix = "STAMP_GUI_"
 
 
 # =============================================================================
@@ -270,7 +270,7 @@ class ExportConfig(BaseSettings):
     )
     
     class Config:
-        env_prefix = "HIL_EXPORT_"
+        env_prefix = "STAMP_EXPORT_"
 
 
 # =============================================================================
@@ -286,7 +286,7 @@ class LoggingConfig(BaseSettings):
     log_dir: Path = Field(default=PROJECT_ROOT / "logs")
     
     class Config:
-        env_prefix = "HIL_LOG_"
+        env_prefix = "STAMP_LOG_"
 
 
 # =============================================================================
@@ -329,7 +329,7 @@ def print_config() -> None:
     """Print current configuration for debugging."""
     import json
     print("=" * 60)
-    print("HIL-AA Configuration")
+    print("STAMP Configuration")
     print("=" * 60)
     print(json.dumps(config.model_dump(), indent=2, default=str))
     print("=" * 60)

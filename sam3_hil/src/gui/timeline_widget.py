@@ -1,5 +1,5 @@
 """
-Timeline Widget for HIL-AA
+Timeline Widget for STAMP Annotation System
 
 Visualizes object tracking confidence across video frames.
 
