@@ -203,18 +203,29 @@ async def upload_video(
         logger.error(f"Upload failed: {e}")
         raise HTTPException(status_code=500, detail=f"上傳失敗: {str(e)}")
 
-@router.post("/image")
+@router.post("/images", response_model=UploadResponse)
 async def upload_image(
     file: UploadFile = File(...),
+    batch_name: str = Form(default=""),
 ):
-    """上傳單張圖片"""
+    """
+    上傳單張圖片。
+    若提供 batch_name，圖片會放在 uploads/{batch_name}/ 子資料夾。
+    """
     ext = Path(file.filename).suffix.lower()
     if ext not in ALLOWED_IMAGE_EXTENSIONS:
         raise HTTPException(400, f"不支援的圖片格式: {ext}")
 
+    # 決定目標資料夾
+    if batch_name:
+        safe_batch = sanitize_filename(batch_name).replace(".", "_")
+        target_dir = UPLOAD_DIR / safe_batch
+    else:
+        target_dir = UPLOAD_DIR
+    target_dir.mkdir(parents=True, exist_ok=True)
+
     safe_filename = sanitize_filename(file.filename)
-    unique_filename = generate_unique_filename(safe_filename)
-    target_path = UPLOAD_DIR / unique_filename
+    target_path = target_dir / safe_filename
 
     total_size = 0
     with open(target_path, "wb") as buffer:
@@ -227,7 +238,7 @@ async def upload_image(
 
     return UploadResponse(
         success=True,
-        filename=unique_filename,
+        filename=safe_filename,
         server_path=str(target_path),
         size_bytes=total_size,
         message="上傳成功",
