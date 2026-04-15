@@ -643,10 +643,17 @@ class ServerBatchDetectionWorker(BaseServerWorker):
                     data = event.get("data", {})
                     index = data.get("index", 0)
                     result = data.get("result", {})
-                    self.image_result.emit(index, result)
+                    frame_result = self._deserialize_single_frame(index, result)
+                    self.image_result.emit(index, frame_result)
                 
                 elif event_type == "completed":
                     result = event.get("result", {})
+                    raw_results = result.get("results", {})
+                    deserialized = {}
+                    for idx_str, frame_data in raw_results.items():
+                        idx = int(idx_str)
+                        deserialized[idx] = self._deserialize_single_frame(idx, frame_data)
+                    result["results"] = deserialized
                     self.progress.emit(total, total, "Done!")
                     self.finished.emit(result)
                     return
@@ -699,6 +706,30 @@ class ServerBatchDetectionWorker(BaseServerWorker):
             except Exception as e:
                 logger.error(f"Polling error: {e}")
                 time.sleep(1.0)
+        
+    def _deserialize_single_frame(self, frame_idx: int, data: dict) -> FrameResult:
+        """把 server 回傳的 dict 轉成 FrameResult"""
+        detections = []
+        for det_data in data.get("detections", []):
+            mask = None
+            if "mask_rle" in det_data:
+                from pycocotools import mask as mask_utils
+                rle = det_data["mask_rle"]
+                if isinstance(rle["counts"], str):
+                    rle["counts"] = rle["counts"].encode("utf-8")
+                mask = mask_utils.decode(rle).astype(bool)
+            
+            detections.append(Detection(
+                obj_id=det_data.get("obj_id", 0),
+                score=det_data.get("score", 0.0),
+                mask=mask,
+                box=np.array(det_data.get("bbox", [0, 0, 0, 0]), dtype=np.float32),
+            ))
+        
+        return FrameResult(
+            frame_index=frame_idx,
+            detections=detections,
+        )
 
 
 # =============================================================================

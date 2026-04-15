@@ -382,7 +382,7 @@ class StampAPIClient:
         """上傳單張圖片，回傳 server_path"""
         with open(image_path, "rb") as f:
             response = requests.post(
-                f"{self.base_url}/api/upload/images",
+                f"{self.server_url}/api/upload/images",
                 files={"file": (Path(image_path).name, f)},
                 data={"batch_name": batch_name},
             )
