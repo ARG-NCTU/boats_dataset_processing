@@ -570,12 +570,22 @@ class ServerBatchDetectionWorker(BaseServerWorker):
         """執行任務"""
         try:
             total = len(self.image_paths)
+
+            # Step 0: 上傳圖片到 server
+            server_paths = []
+            for i, local_path in enumerate(self.image_paths):
+                if self._check_cancelled():
+                    self.cancelled.emit()
+                    return
+                self.progress.emit(i, total, f"Uploading {i+1}/{total}...")
+                server_path = self.client.upload_image(local_path)
+                server_paths.append(server_path)
             
             # Step 1: 建立任務
             self.progress.emit(0, total, "Creating batch detection job...")
             
             self._task_id = self.client.create_batch_detection_job(
-                image_paths=self.image_paths,
+                image_paths=server_paths,
                 prompt=self.prompt,
             )
             
