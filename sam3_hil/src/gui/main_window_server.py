@@ -941,9 +941,9 @@ class ExportDialog(QDialog):
         self.rejected_checkbox.setChecked(False)
         options_layout.addWidget(self.rejected_checkbox)
         
-        self.hil_fields_checkbox = QCheckBox("Include STAMP fields in COCO")
-        self.hil_fields_checkbox.setChecked(True)
-        options_layout.addWidget(self.hil_fields_checkbox)
+        self.stamp_fields_checkbox = QCheckBox("Include STAMP fields in COCO")
+        self.stamp_fields_checkbox.setChecked(True)
+        options_layout.addWidget(self.stamp_fields_checkbox)
         
         layout.addWidget(options_group)
         
@@ -1104,8 +1104,8 @@ class ExportDialog(QDialog):
     def get_include_rejected(self) -> bool:
         return self.rejected_checkbox.isChecked()
     
-    def get_include_hil_fields(self) -> bool:
-        return self.hil_fields_checkbox.isChecked()
+    def get_include_stamp_fields(self) -> bool:
+        return self.stamp_fields_checkbox.isChecked()
     
     def get_split_ratios(self) -> Tuple[float, float, float]:
         return (self.train_spin.value(), self.val_spin.value(), self.test_spin.value())
@@ -3577,7 +3577,7 @@ class STAMPMainWindow(QMainWindow):
         object_labels = dialog.get_object_labels()  # obj_id -> label_name
         frame_interval = dialog.get_frame_interval()
         include_rejected = dialog.get_include_rejected()
-        include_hil_fields = dialog.get_include_hil_fields()
+        include_stamp_fields = dialog.get_include_stamp_fields()
         train_ratio, val_ratio, test_ratio = dialog.get_split_ratios()
         
         # 計算 frame step
@@ -4163,7 +4163,7 @@ class STAMPMainWindow(QMainWindow):
         
         reply = QMessageBox.question(
             self, "Confirm Propagation",
-            f"This will track the object from frame {self.current_frame} to frame {total_frames - 1} "
+            f"This will track the object from frame {self.current_frame + 1} to frame {total_frames} "
             f"({remaining_frames} frames).\n\n"
             f"This may take a while. Continue?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
