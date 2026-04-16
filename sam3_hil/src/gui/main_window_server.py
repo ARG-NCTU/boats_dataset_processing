@@ -2386,7 +2386,9 @@ class STAMPMainWindow(QMainWindow):
             self.video_analysis = None
             self.object_status = {}
             self.object_list.clear()
-            
+            self._original_video_path = None
+            self._server_video_path = None
+
             # 更新 UI
             total = self.video_loader.metadata.total_frames
             meta = self.video_loader.metadata
@@ -3523,8 +3525,16 @@ class STAMPMainWindow(QMainWindow):
             return
         
         # 取得預設名稱（影片檔名）
-        default_name = Path(self.video_loader.video_path).stem
+        # 取得預設名稱和影像來源路徑
+        is_independent_mode = (self.processing_mode_combo.currentIndex() == 1)
         video_fps = self.video_loader.metadata.fps
+
+        if is_independent_mode:
+            default_name = self.video_loader.metadata.folder_name
+            video_path_for_export = str(self.video_loader.folder_path)
+        else:
+            default_name = Path(self.video_loader.video_path).stem
+            video_path_for_export = getattr(self, '_original_video_path', str(self.video_loader.video_path))
         
         # 收集 object 資訊
         object_info = []
@@ -3600,7 +3610,7 @@ class STAMPMainWindow(QMainWindow):
             output_dir=Path(output_dir),
             base_name=dataset_name,
             # 使用原始本地路徑（而非 Server 路徑）
-            video_path=getattr(self, '_original_video_path', str(self.video_loader.video_path)),
+            video_path=video_path_for_export,
             video_fps=video_fps,
             video_width=self.video_loader.metadata.width,
             video_height=self.video_loader.metadata.height,
