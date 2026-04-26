@@ -483,6 +483,11 @@ class ServerVideoDetectionWorker(BaseServerWorker):
                     elif event_type in ("heartbeat", "pong"):
                         pass
 
+                logger.warning("WebSocket ended without terminal event, falling back to polling")
+                self._close_ws()
+                self._run_with_polling()
+                return
+
             except Exception as e:
                 logger.warning(f"WebSocket disconnected mid-stream: {e}, falling back to polling")
                 self._close_ws()
@@ -720,6 +725,11 @@ class ServerBatchDetectionWorker(BaseServerWorker):
                     elif event_type in ("heartbeat", "pong", "confirm_response", "cancel_response"):
                         pass
 
+                logger.warning("Batch WebSocket ended without terminal event, falling back to polling")
+                self._close_ws()
+                self._run_with_polling(total)
+                return
+
             except Exception as e:
                 logger.warning(f"WebSocket disconnected mid-stream: {e}, falling back to polling")
                 self._close_ws()
@@ -922,6 +932,11 @@ class ServerPropagateWorker(BaseServerWorker):
 
                     elif event_type in ("heartbeat", "pong", "confirm_response", "cancel_response"):
                         pass
+
+                logger.warning("Propagate WebSocket ended without terminal event, falling back to polling")
+                self._close_ws()
+                self._run_with_polling()
+                return            
 
             except Exception as e:
                 logger.warning(f"WebSocket disconnected mid-stream: {e}, falling back to polling")
