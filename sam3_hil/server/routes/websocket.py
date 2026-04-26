@@ -26,6 +26,7 @@ WebSocket 連線處理，用於：
 
 import asyncio
 import json
+import contextlib
 from typing import Dict, Set
 from datetime import datetime
 
@@ -62,39 +63,38 @@ class ConnectionManager:
         self._connections: Dict[str, Set[WebSocket]] = {}
         # websocket -> task_id
         self._websocket_tasks: Dict[WebSocket, str] = {}
-        # websocket -> asyncio.Queue (用於從同步 callback 傳遞事件到異步 WebSocket)
+        # websocket -> asyncio.Queue
         self._queues: Dict[WebSocket, asyncio.Queue] = {}
+        # websocket -> owning event loop
+        self._loops: Dict[WebSocket, asyncio.AbstractEventLoop] = {}
     
     async def connect(self, websocket: WebSocket, task_id: str):
         """建立連線"""
         await websocket.accept()
-        
-        # 記錄連線
+
         if task_id not in self._connections:
             self._connections[task_id] = set()
         self._connections[task_id].add(websocket)
         self._websocket_tasks[websocket] = task_id
-        
-        # 建立事件佇列
+
         self._queues[websocket] = asyncio.Queue()
-        
+        self._loops[websocket] = asyncio.get_running_loop()
+
         logger.info(f"WebSocket connected: task={task_id}")
     
     def disconnect(self, websocket: WebSocket):
         """斷開連線"""
         task_id = self._websocket_tasks.get(websocket)
-        
+
         if task_id and task_id in self._connections:
             self._connections[task_id].discard(websocket)
             if not self._connections[task_id]:
                 del self._connections[task_id]
-        
-        if websocket in self._websocket_tasks:
-            del self._websocket_tasks[websocket]
-        
-        if websocket in self._queues:
-            del self._queues[websocket]
-        
+
+        self._websocket_tasks.pop(websocket, None)
+        self._queues.pop(websocket, None)
+        self._loops.pop(websocket, None)
+
         logger.info(f"WebSocket disconnected: task={task_id}")
     
     def get_queue(self, websocket: WebSocket) -> asyncio.Queue:
@@ -104,35 +104,47 @@ class ConnectionManager:
     def push_event(self, task_id: str, event: TaskEvent):
         """
         把事件推送到對應的 WebSocket 佇列
-        
-        注意：這個方法會被 TaskManager 的同步 callback 呼叫，
-        所以需要用 thread-safe 的方式把事件放到 asyncio 佇列。
+        這個 callback 可能從非 async / 非同一 thread 被呼叫，
+        所以一定要用該 websocket 所屬的 event loop 做 thread-safe put。
         """
         if task_id not in self._connections:
             return
-        
+
         event_data = event.to_dict()
-        
-        for websocket in self._connections[task_id]:
+
+        dead_websockets = []
+
+        for websocket in list(self._connections[task_id]):
             queue = self._queues.get(websocket)
-            if queue:
-                # 使用 call_soon_threadsafe 從同步環境放入異步佇列
-                try:
-                    loop = asyncio.get_event_loop()
-                    loop.call_soon_threadsafe(queue.put_nowait, event_data)
-                except RuntimeError:
-                    # 如果沒有 event loop，嘗試直接放入
-                    try:
-                        queue.put_nowait(event_data)
-                    except Exception as e:
-                        logger.warning(f"Failed to push event: {e}")
+            loop = self._loops.get(websocket)
+
+            if queue is None or loop is None:
+                dead_websockets.append(websocket)
+                continue
+
+            try:
+                loop.call_soon_threadsafe(queue.put_nowait, event_data)
+            except Exception as e:
+                logger.warning(f"Failed to enqueue event for websocket: {e}")
+                dead_websockets.append(websocket)
+
+        for websocket in dead_websockets:
+            self.disconnect(websocket)
     
-    async def send_json(self, websocket: WebSocket, data: dict):
-        """發送 JSON 訊息"""
+    async def send_json(self, websocket: WebSocket, data: dict) -> bool:
+        """
+        發送 JSON 訊息
+        回傳：
+            True  = 成功送出
+            False = websocket 已不可用
+        """
         try:
             await websocket.send_json(data)
+            return True
         except Exception as e:
             logger.warning(f"Failed to send WebSocket message: {e}")
+            self.disconnect(websocket)
+            return False
 
 
 # 全局連線管理器
@@ -147,56 +159,59 @@ manager = ConnectionManager()
 async def websocket_job_progress(websocket: WebSocket, task_id: str):
     """
     監聽任務進度的 WebSocket 端點
-    
-    連線後會收到該任務的所有事件：
-    - progress: 進度更新
-    - waiting_confirm: 等待確認
-    - intermediate: 中間結果
-    - completed: 完成
-    - failed: 失敗
-    - cancelled: 取消
-    
-    Client 可以發送：
-    - {"action": "confirm"}: 確認繼續執行
-    - {"action": "cancel"}: 取消任務
-    - {"action": "ping"}: 心跳（Server 會回 {"type": "pong"}）
     """
     task_manager = get_task_manager()
-    
-    # 檢查任務是否存在
+
     task = task_manager.get_task(task_id)
     if task is None:
         await websocket.close(code=4004, reason=f"Task not found: {task_id}")
         return
-    
-    # 建立連線
+
     await manager.connect(websocket, task_id)
-    
-    # 訂閱 TaskManager 事件
+
     def on_event(event: TaskEvent):
         manager.push_event(task_id, event)
-    
+
     unsubscribe = task_manager.subscribe(task_id, on_event)
-    
+
+    outgoing_task = None
+    incoming_task = None
+
     try:
-        # 發送目前狀態
-        await send_current_status(websocket, task)
-        
-        # 取得事件佇列
+        ok = await send_current_status(websocket, task)
+        if not ok:
+            return
+
         queue = manager.get_queue(websocket)
-        
-        # 同時監聽：事件佇列 和 Client 訊息
-        await asyncio.gather(
-            handle_outgoing_events(websocket, queue, task_id),
-            handle_incoming_messages(websocket, task_id),
+        if queue is None:
+            logger.warning(f"No queue found for websocket: task={task_id}")
+            return
+
+        outgoing_task = asyncio.create_task(handle_outgoing_events(websocket, queue, task_id))
+        incoming_task = asyncio.create_task(handle_incoming_messages(websocket, task_id))
+
+        done, pending = await asyncio.wait(
+            {outgoing_task, incoming_task},
+            return_when=asyncio.FIRST_COMPLETED,
         )
-        
+
+        for t in pending:
+            t.cancel()
+
+        for t in pending:
+            with contextlib.suppress(asyncio.CancelledError):
+                await t
+
+        for t in done:
+            exc = t.exception()
+            if exc:
+                raise exc
+
     except WebSocketDisconnect:
         logger.info(f"WebSocket disconnected by client: task={task_id}")
     except Exception as e:
         logger.error(f"WebSocket error: {e}")
     finally:
-        # 清理
         unsubscribe()
         manager.disconnect(websocket)
 
@@ -210,14 +225,13 @@ async def send_current_status(websocket: WebSocket, task):
         "progress": task.progress,
         "message": task.message,
     }
-    
-    # 如果任務已經有結果，一起發送
+
     if task.status == TaskStatus.COMPLETED and task.result:
         status_message["result"] = task.result
     elif task.status == TaskStatus.FAILED and task.error:
         status_message["error"] = task.error
-    
-    await manager.send_json(websocket, status_message)
+
+    return await manager.send_json(websocket, status_message)
 
 
 async def handle_outgoing_events(websocket: WebSocket, queue: asyncio.Queue, task_id: str):
@@ -226,24 +240,27 @@ async def handle_outgoing_events(websocket: WebSocket, queue: asyncio.Queue, tas
     """
     while True:
         try:
-            # 等待事件（有 timeout 以便檢查連線狀態）
             try:
                 event_data = await asyncio.wait_for(queue.get(), timeout=30.0)
             except asyncio.TimeoutError:
-                # 發送心跳
-                await manager.send_json(websocket, {"type": "heartbeat"})
+                ok = await manager.send_json(websocket, {"type": "heartbeat"})
+                if not ok:
+                    logger.info(f"Stop heartbeat because websocket is closed: task={task_id}")
+                    break
                 continue
-            
-            # 發送事件給 Client
-            await manager.send_json(websocket, event_data)
-            
-            # 如果是終結事件，結束監聽
+
+            ok = await manager.send_json(websocket, event_data)
+            if not ok:
+                logger.info(f"Stop outgoing events because websocket is closed: task={task_id}")
+                break
+
             if event_data.get("type") in ["completed", "failed", "cancelled"]:
                 logger.info(f"Task {task_id} ended with {event_data.get('type')}")
-                # 給 Client 一點時間收到訊息
-                await asyncio.sleep(0.5)
+                await asyncio.sleep(0.2)
                 break
-                
+
+        except asyncio.CancelledError:
+            raise
         except Exception as e:
             logger.error(f"Error handling outgoing event: {e}")
             break
@@ -254,48 +271,54 @@ async def handle_incoming_messages(websocket: WebSocket, task_id: str):
     處理從 Client 來的訊息
     """
     task_manager = get_task_manager()
-    
+
     while True:
         try:
-            # 等待 Client 訊息
             data = await websocket.receive_json()
-            
             action = data.get("action")
-            
+
             if action == "ping":
-                # 心跳回應
-                await manager.send_json(websocket, {"type": "pong"})
-                
+                ok = await manager.send_json(websocket, {"type": "pong"})
+                if not ok:
+                    break
+
             elif action == "confirm":
-                # 確認任務
                 success = task_manager.confirm_task(task_id)
-                await manager.send_json(websocket, {
+                ok = await manager.send_json(websocket, {
                     "type": "confirm_response",
                     "success": success,
                 })
-                
+                if not ok:
+                    break
+
             elif action == "cancel":
-                # 取消任務
                 success = task_manager.cancel_task(task_id)
-                await manager.send_json(websocket, {
+                ok = await manager.send_json(websocket, {
                     "type": "cancel_response",
                     "success": success,
                 })
-                
+                if not ok:
+                    break
+
             else:
-                # 未知動作
-                await manager.send_json(websocket, {
+                ok = await manager.send_json(websocket, {
                     "type": "error",
                     "message": f"Unknown action: {action}",
                 })
-                
+                if not ok:
+                    break
+
         except WebSocketDisconnect:
             raise
         except json.JSONDecodeError as e:
-            await manager.send_json(websocket, {
+            ok = await manager.send_json(websocket, {
                 "type": "error",
                 "message": f"Invalid JSON: {e}",
             })
+            if not ok:
+                break
+        except asyncio.CancelledError:
+            raise
         except Exception as e:
             logger.error(f"Error handling incoming message: {e}")
             break
