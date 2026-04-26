@@ -2274,7 +2274,7 @@ class STAMPMainWindow(QMainWindow):
             self,
             "Select Video",
             "",
-            "Video Files (*.mp4 *.avi *.mov *.mkv);;All Files (*)"
+            "Video Files (*.mp4 *.avi *.mov *.mkv *webm *m4v *MP4 *AVI *MOV *MKV *WEBM *M4V);;All Files (*)"
         )
         
         if not file_path:
