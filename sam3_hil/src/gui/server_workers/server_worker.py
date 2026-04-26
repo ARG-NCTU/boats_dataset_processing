@@ -239,6 +239,15 @@ class BaseServerWorker(QThread):
         """檢查是否已取消"""
         return self._cancelled
 
+    def _close_ws(self):
+        """安全關閉 WebSocket 並清空引用"""
+        if self._ws:
+            try:
+                self._ws.close()
+            except Exception:
+                pass
+            self._ws = None
+
 
 # =============================================================================
 # Video Detection Worker
@@ -278,6 +287,7 @@ class ServerVideoDetectionWorker(BaseServerWorker):
         self.video_path = video_path
         self.prompt = prompt
         self._server_video_path = None  # 上傳後的 Server 路徑
+        self._waiting_confirm_emitted = False
     
     def continue_propagation(self):
         """
@@ -293,6 +303,8 @@ class ServerVideoDetectionWorker(BaseServerWorker):
             # =================================================================
             # Step 0: 檢查是否需要上傳
             # =================================================================
+            self._confirm_event.clear()
+            self._waiting_confirm_emitted = False
             video_path_to_use = self.video_path
             
             # 判斷是否為本地路徑（Server 路徑是 /app/... 開頭）
@@ -353,8 +365,24 @@ class ServerVideoDetectionWorker(BaseServerWorker):
             logger.error(f"Worker error: {error_msg}\n{traceback.format_exc()}")
             self.error.emit(error_msg)
     
+    def _finish_with_result(self, raw_result: dict):
+        self.progress.emit(100, "Completed!")
+
+        try:
+            deserialized = deserialize_results(raw_result or {})
+            logger.info(f"Deserialized {len(deserialized)} frames")
+        except Exception as e:
+            logger.error(f"Failed to deserialize results: {e}")
+            self.error.emit(f"Failed to deserialize results: {e}")
+            return
+
+        self.finished.emit({
+            "results": deserialized,
+            "server_video_path": getattr(self, "_server_video_path", None),
+        })
+
     def _run_with_websocket(self):
-        """使用 WebSocket 監聽進度"""
+        """使用 WebSocket 監聽進度；若中途斷線，自動 fallback 到 polling"""
         try:
             ws = self.client.connect_job_websocket(self._task_id)
             self._ws = ws
@@ -362,178 +390,168 @@ class ServerVideoDetectionWorker(BaseServerWorker):
             logger.warning(f"WebSocket connection failed, falling back to polling: {e}")
             self._run_with_polling()
             return
-        
+
         try:
-            for event in self.client.iter_job_events(ws):
-                if self._check_cancelled():
-                    self.cancelled.emit()
-                    return
-                
-                event_type = event.get("type")
-                
-                if event_type == "status":
-                    # 初始狀態
-                    progress = event.get("progress", 0)
-                    message = event.get("message", "")
-                    self.progress.emit(progress, message)
-                
-                elif event_type == "progress":
-                    progress = event.get("progress", 0)
-                    message = event.get("message", "")
-                    self.progress.emit(progress, message)
-                
-                elif event_type == "waiting_confirm":
-                    # 等待用戶確認
-                    data = event.get("data", {})
-                    num_objects = data.get("num_objects", 0)
-                    
-                    self.progress.emit(45, f"Found {num_objects} objects. Waiting for confirmation...")
-                    self.ready_to_propagate.emit(num_objects, data)
-                    
-                    # 等待確認或取消（使用超時等待，每 10 秒發送 ping 保持連接）
-                    logger.info("Waiting for user confirmation...")
-                    ws_alive = True
-                    while not self._confirm_event.wait(timeout=10.0):
+            try:
+                for event in self.client.iter_job_events(ws):
+                    if self._check_cancelled():
+                        self.cancelled.emit()
+                        return
+
+                    event_type = event.get("type")
+
+                    if event_type == "status":
+                        status = event.get("status")
+                        progress = event.get("progress", 0)
+                        message = event.get("message", "")
+                        self.progress.emit(progress, message)
+
+                        if status == JobStatus.COMPLETED.value:
+                            logger.info("Received terminal status=completed via status event")
+                            self._finish_with_result(event.get("result", {}) or {})
+                            return
+                        elif status == JobStatus.FAILED.value:
+                            self.error.emit(event.get("error", "Unknown error"))
+                            return
+                        elif status == JobStatus.CANCELLED.value:
+                            self.cancelled.emit()
+                            return
+
+                    elif event_type == "progress":
+                        progress = event.get("progress", 0)
+                        message = event.get("message", "")
+                        self.progress.emit(progress, message)
+
+                    elif event_type == "waiting_confirm":
+                        data = event.get("data", {})
+                        num_objects = data.get("num_objects", 0)
+
+                        self.progress.emit(45, f"Found {num_objects} objects. Waiting for confirmation...")
+
+                        if not self._waiting_confirm_emitted:
+                            self.ready_to_propagate.emit(num_objects, data)
+                            self._waiting_confirm_emitted = True
+
+                        logger.info("Waiting for user confirmation...")
+                        ws_alive = True
+
+                        while not self._confirm_event.wait(timeout=10.0):
+                            if self._cancelled:
+                                self.cancelled.emit()
+                                return
+
+                            try:
+                                ws.send('{"action": "ping"}')
+                                logger.debug("Sent ping to keep WebSocket alive")
+                            except Exception as e:
+                                logger.warning(
+                                    f"WebSocket lost while waiting for confirmation: {e}. "
+                                    f"Falling back to polling."
+                                )
+                                ws_alive = False
+                                break
+
+                        if not ws_alive:
+                            self._close_ws()
+                            self._run_with_polling()
+                            return
+
                         if self._cancelled:
                             self.cancelled.emit()
                             return
-                        # 發送 ping 保持連接
-                        try:
-                            ws.send('{"action": "ping"}')
-                            logger.debug("Sent ping to keep WebSocket alive")
-                        except Exception as e:
-                            logger.warning(f"Failed to send ping: {e}")
-                            ws_alive = False
-                            break
-                    
-                    if not ws_alive:
-                        self.error.emit("WebSocket connection lost while waiting for confirmation")
+
+                        self.progress.emit(50, "Confirmed. Propagating...")
+
+                    elif event_type == "intermediate":
+                        # Video worker 不需要處理 intermediate
+                        pass
+
+                    elif event_type == "completed":
+                        logger.info("=== Received completed event ===")
+                        self._finish_with_result(event.get("result", {}) or {})
                         return
 
-                    if self._cancelled:
+                    elif event_type == "failed":
+                        error_msg = event.get("error", "Unknown error")
+                        self.error.emit(error_msg)
+                        return
+
+                    elif event_type == "cancelled":
                         self.cancelled.emit()
                         return
-                    
-                    # 用戶已確認，WebSocket 會收到後續進度
-                    self.progress.emit(50, "Confirmed. Propagating...")
-                
-                elif event_type == "intermediate":
-                    # 中間結果（批量處理時）
-                    pass
-                
-                elif event_type == "completed":
-                    logger.info("=== Received completed event ===")
-                    raw_result = event.get("result", {})
-                    logger.info(f"Raw result keys: {raw_result.keys() if raw_result else 'None'}")
-                    
-                    self.progress.emit(100, "Completed!")
-                    
-                    # 反序列化結果
-                    try:
-                        deserialized = deserialize_results(raw_result)
-                        logger.info(f"Deserialized {len(deserialized)} frames")
-                    except Exception as e:
-                        logger.error(f"Failed to deserialize results: {e}")
-                        import traceback
-                        traceback.print_exc()
-                        self.error.emit(f"Failed to deserialize results: {e}")
-                        return
-                    
-                    # 發送與 SAM3Worker 相容的格式
-                    # 包含 server_video_path 供後續 propagate 使用
-                    logger.info("Emitting finished signal...")
-                    self.finished.emit({
-                        "results": deserialized,
-                        "server_video_path": getattr(self, '_server_video_path', None),
-                    })
-                    logger.info("Finished signal emitted")
-                    return
-                
-                elif event_type == "failed":
-                    error_msg = event.get("error", "Unknown error")
-                    self.error.emit(error_msg)
-                    return
-                
-                elif event_type == "cancelled":
-                    self.cancelled.emit()
-                    return
-                
-                elif event_type == "heartbeat":
-                    # 心跳，忽略
-                    pass
-                
-                elif event_type == "pong":
-                    # ping 回應，忽略
-                    pass
-                
+
+                    elif event_type in ("heartbeat", "pong"):
+                        pass
+
+            except Exception as e:
+                logger.warning(f"WebSocket disconnected mid-stream: {e}, falling back to polling")
+                self._close_ws()
+                self._run_with_polling()
+                return
+
         finally:
-            if self._ws:
-                try:
-                    self._ws.close()
-                except:
-                    pass
-                self._ws = None
+            self._close_ws()
     
     def _run_with_polling(self):
-        """使用輪詢監聽進度（WebSocket 不可用時的 fallback）"""
+        """使用輪詢監聽進度（WebSocket 不可用或中途中斷時的 fallback）"""
         import time
-        
+
         logger.info("Using polling mode")
-        
+
         while True:
             if self._check_cancelled():
                 self.cancelled.emit()
                 return
-            
+
             try:
                 job = self.client.get_job(self._task_id)
-                
+
                 self.progress.emit(job.progress, job.message)
-                
+
                 if job.status == JobStatus.WAITING_CONFIRM:
-                    # 等待確認
                     num_objects = 0
                     data = {}
-                    
-                    # 嘗試從之前的結果取得物件數
+
                     if job.result:
                         data = job.result
                         num_objects = data.get("num_objects", 0)
-                    
-                    self.ready_to_propagate.emit(num_objects, data)
-                    
-                    # 等待用戶確認
-                    self._confirm_event.wait()
-                    
-                    if self._cancelled:
-                        self.cancelled.emit()
-                        return
-                
+
+                    if not self._waiting_confirm_emitted:
+                        self.ready_to_propagate.emit(num_objects, data)
+                        self._waiting_confirm_emitted = True
+
+                    while not self._confirm_event.wait(timeout=1.0):
+                        if self._cancelled:
+                            self.cancelled.emit()
+                            return
+
                 elif job.status == JobStatus.COMPLETED:
                     self.progress.emit(100, "Completed!")
-                    
-                    # 反序列化結果
+
                     raw_result = job.result or {}
                     deserialized = deserialize_results(raw_result)
-                    
-                    # 發送與 SAM3Worker 相容的格式
-                    self.finished.emit({"results": deserialized})
+
+                    self.finished.emit({
+                        "results": deserialized,
+                        "server_video_path": getattr(self, "_server_video_path", None),
+                    })
                     return
-                
+
                 elif job.status == JobStatus.FAILED:
                     self.error.emit(job.error or "Unknown error")
                     return
-                
+
                 elif job.status == JobStatus.CANCELLED:
                     self.cancelled.emit()
                     return
-                
+
                 time.sleep(1.0)
-                
+
             except Exception as e:
                 logger.error(f"Polling error: {e}")
                 time.sleep(1.0)
 
+    
 
 # =============================================================================
 # Batch Detection Worker
@@ -614,8 +632,30 @@ class ServerBatchDetectionWorker(BaseServerWorker):
             logger.error(f"Worker error: {error_msg}")
             self.error.emit(error_msg)
     
+    def _finish_with_batch_result(self, result: dict, total: int):
+        """
+        統一處理 batch job 完成結果
+        支援：
+        - WebSocket completed event
+        - WebSocket status=completed
+        - polling completed
+        """
+        result = result or {}
+
+        raw_results = result.get("results", {})
+        deserialized = {}
+
+        for idx_str, frame_data in raw_results.items():
+            idx = int(idx_str)
+            deserialized[idx] = self._deserialize_single_frame(idx, frame_data)
+
+        result["results"] = deserialized
+
+        self.progress.emit(total, total, "Done!")
+        self.finished.emit(result)
+
     def _run_with_websocket(self, total: int):
-        """使用 WebSocket"""
+        """使用 WebSocket；若中途斷線，自動 fallback 到 polling"""
         try:
             ws = self.client.connect_job_websocket(self._task_id)
             self._ws = ws
@@ -623,86 +663,101 @@ class ServerBatchDetectionWorker(BaseServerWorker):
             logger.warning(f"WebSocket failed: {e}")
             self._run_with_polling(total)
             return
-        
+
         try:
-            for event in self.client.iter_job_events(ws):
-                if self._check_cancelled():
-                    self.cancelled.emit()
-                    return
-                
-                event_type = event.get("type")
-                
-                if event_type == "progress":
-                    progress = event.get("progress", 0)
-                    message = event.get("message", "")
-                    current = int(progress * total / 100)
-                    self.progress.emit(current, total, message)
-                
-                elif event_type == "intermediate":
-                    # 單張結果
-                    data = event.get("data", {})
-                    index = data.get("index", 0)
-                    result = data.get("result", {})
-                    frame_result = self._deserialize_single_frame(index, result)
-                    self.image_result.emit(index, frame_result)
-                
-                elif event_type == "completed":
-                    result = event.get("result", {})
-                    raw_results = result.get("results", {})
-                    deserialized = {}
-                    for idx_str, frame_data in raw_results.items():
-                        idx = int(idx_str)
-                        deserialized[idx] = self._deserialize_single_frame(idx, frame_data)
-                    result["results"] = deserialized
-                    self.progress.emit(total, total, "Done!")
-                    self.finished.emit(result)
-                    return
-                
-                elif event_type == "failed":
-                    self.error.emit(event.get("error", "Unknown error"))
-                    return
-                
-                elif event_type == "cancelled":
-                    self.cancelled.emit()
-                    return
-                
+            try:
+                for event in self.client.iter_job_events(ws):
+                    if self._check_cancelled():
+                        self.cancelled.emit()
+                        return
+
+                    event_type = event.get("type")
+
+                    if event_type == "status":
+                        status = event.get("status")
+                        progress = event.get("progress", 0)
+                        message = event.get("message", "")
+                        current = int(progress * total / 100)
+                        self.progress.emit(current, total, message)
+
+                        if status == JobStatus.COMPLETED.value:
+                            logger.info("Received terminal status=completed via status event (batch)")
+                            self._finish_with_batch_result(event.get("result", {}) or {}, total)
+                            return
+                        elif status == JobStatus.FAILED.value:
+                            self.error.emit(event.get("error", "Unknown error"))
+                            return
+                        elif status == JobStatus.CANCELLED.value:
+                            self.cancelled.emit()
+                            return
+
+                    elif event_type == "progress":
+                        progress = event.get("progress", 0)
+                        message = event.get("message", "")
+                        current = int(progress * total / 100)
+                        self.progress.emit(current, total, message)
+
+                    elif event_type == "intermediate":
+                        data = event.get("data", {})
+                        index = data.get("index", 0)
+                        result = data.get("result", {})
+                        frame_result = self._deserialize_single_frame(index, result)
+                        self.image_result.emit(index, frame_result)
+
+                    elif event_type == "completed":
+                        logger.info("Received completed event (batch)")
+                        self._finish_with_batch_result(event.get("result", {}) or {}, total)
+                        return
+
+                    elif event_type == "failed":
+                        self.error.emit(event.get("error", "Unknown error"))
+                        return
+
+                    elif event_type == "cancelled":
+                        self.cancelled.emit()
+                        return
+
+                    elif event_type in ("heartbeat", "pong", "confirm_response", "cancel_response"):
+                        pass
+
+            except Exception as e:
+                logger.warning(f"WebSocket disconnected mid-stream: {e}, falling back to polling")
+                self._close_ws()
+                self._run_with_polling(total)
+                return
+
         finally:
-            if self._ws:
-                try:
-                    self._ws.close()
-                except:
-                    pass
+            self._close_ws()
     
     def _run_with_polling(self, total: int):
         """使用輪詢"""
         import time
-        
+
         while True:
             if self._check_cancelled():
                 self.cancelled.emit()
                 return
-            
+
             try:
                 job = self.client.get_job(self._task_id)
-                
+
                 current = int(job.progress * total / 100)
                 self.progress.emit(current, total, job.message)
-                
+
                 if job.status == JobStatus.COMPLETED:
-                    self.progress.emit(total, total, "Done!")
-                    self.finished.emit(job.result or {})
+                    self._finish_with_batch_result(job.result or {}, total)
                     return
-                
+
                 elif job.status == JobStatus.FAILED:
                     self.error.emit(job.error or "Unknown error")
                     return
-                
+
                 elif job.status == JobStatus.CANCELLED:
                     self.cancelled.emit()
                     return
-                
+
                 time.sleep(1.0)
-                
+
             except Exception as e:
                 logger.error(f"Polling error: {e}")
                 time.sleep(1.0)
@@ -800,8 +855,19 @@ class ServerPropagateWorker(BaseServerWorker):
             logger.error(f"Worker error: {error_msg}")
             self.error.emit(error_msg)
     
+    def _finish_with_propagate_result(self, result: dict):
+        """
+        統一處理 propagate job 完成結果
+        支援：
+        - WebSocket completed event
+        - WebSocket status=completed
+        - polling completed
+        """
+        self.progress.emit(100, "Propagation completed!")
+        self.finished.emit(result or {})
+
     def _run_with_websocket(self):
-        """使用 WebSocket"""
+        """使用 WebSocket；若中途斷線，自動 fallback 到 polling"""
         try:
             ws = self.client.connect_job_websocket(self._task_id)
             self._ws = ws
@@ -809,40 +875,62 @@ class ServerPropagateWorker(BaseServerWorker):
             logger.warning(f"WebSocket failed: {e}")
             self._run_with_polling()
             return
-        
+
         try:
-            for event in self.client.iter_job_events(ws):
-                if self._check_cancelled():
-                    self.cancelled.emit()
-                    return
-                
-                event_type = event.get("type")
-                
-                if event_type == "progress":
-                    progress = event.get("progress", 0)
-                    message = event.get("message", "")
-                    self.progress.emit(progress, message)
-                
-                elif event_type == "completed":
-                    result = event.get("result", {})
-                    self.progress.emit(100, "Propagation completed!")
-                    self.finished.emit(result)
-                    return
-                
-                elif event_type == "failed":
-                    self.error.emit(event.get("error", "Unknown error"))
-                    return
-                
-                elif event_type == "cancelled":
-                    self.cancelled.emit()
-                    return
-                
+            try:
+                for event in self.client.iter_job_events(ws):
+                    if self._check_cancelled():
+                        self.cancelled.emit()
+                        return
+
+                    event_type = event.get("type")
+
+                    if event_type == "status":
+                        status = event.get("status")
+                        progress = event.get("progress", 0)
+                        message = event.get("message", "")
+                        self.progress.emit(progress, message)
+
+                        if status == JobStatus.COMPLETED.value:
+                            logger.info("Received terminal status=completed via status event (propagate)")
+                            self._finish_with_propagate_result(event.get("result", {}) or {})
+                            return
+                        elif status == JobStatus.FAILED.value:
+                            self.error.emit(event.get("error", "Unknown error"))
+                            return
+                        elif status == JobStatus.CANCELLED.value:
+                            self.cancelled.emit()
+                            return
+
+                    elif event_type == "progress":
+                        progress = event.get("progress", 0)
+                        message = event.get("message", "")
+                        self.progress.emit(progress, message)
+
+                    elif event_type == "completed":
+                        logger.info("Received completed event (propagate)")
+                        self._finish_with_propagate_result(event.get("result", {}) or {})
+                        return
+
+                    elif event_type == "failed":
+                        self.error.emit(event.get("error", "Unknown error"))
+                        return
+
+                    elif event_type == "cancelled":
+                        self.cancelled.emit()
+                        return
+
+                    elif event_type in ("heartbeat", "pong", "confirm_response", "cancel_response"):
+                        pass
+
+            except Exception as e:
+                logger.warning(f"WebSocket disconnected mid-stream: {e}, falling back to polling")
+                self._close_ws()
+                self._run_with_polling()
+                return
+
         finally:
-            if self._ws:
-                try:
-                    self._ws.close()
-                except:
-                    pass
+            self._close_ws()
     
     def _run_with_polling(self):
         """使用輪詢"""
@@ -859,8 +947,7 @@ class ServerPropagateWorker(BaseServerWorker):
                 self.progress.emit(job.progress, job.message)
                 
                 if job.status == JobStatus.COMPLETED:
-                    self.progress.emit(100, "Propagation completed!")
-                    self.finished.emit(job.result or {})
+                    self._finish_with_propagate_result(job.result or {})
                     return
                 
                 elif job.status == JobStatus.FAILED:
