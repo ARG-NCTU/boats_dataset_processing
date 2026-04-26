@@ -726,32 +726,28 @@ class StampAPIClient:
     ) -> Generator[Dict[str, Any], None, None]:
         """
         迭代 WebSocket 事件
-        
-        Args:
-            ws: WebSocket 連線
-            
-        Yields:
-            事件字典，例如：
-            {"type": "progress", "progress": 45, "message": "Detecting..."}
-            {"type": "waiting_confirm", "data": {...}}
-            {"type": "completed", "result": {...}}
+        若 WebSocket 在沒有 terminal event 的情況下關閉，直接 raise，
+        讓上層 worker 可以 fallback 到 polling。
         """
         while True:
             try:
                 message = ws.recv()
+
+                # 這裡不能安靜 break，否則上層會以為正常結束
                 if not message:
-                    break
-                
+                    raise RuntimeError("WebSocket closed without terminal event")
+
                 event = json.loads(message)
                 yield event
-                
-                # 終結事件
+
+                # 正常 terminal event
                 if event.get("type") in ["completed", "failed", "cancelled"]:
-                    break
-                    
+                    return
+
             except websocket.WebSocketTimeoutException:
                 # 發送 ping 保持連線
                 ws.send(json.dumps({"action": "ping"}))
+
             except Exception as e:
                 logger.error(f"WebSocket error: {e}")
                 raise
