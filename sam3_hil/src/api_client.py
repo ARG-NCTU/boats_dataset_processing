@@ -222,7 +222,7 @@ class StampAPIClient:
         self,
         server_url: str = "http://localhost:8000",
         timeout: int = 120,
-        websocket_timeout: int = 30,
+        websocket_timeout: int = 10,
     ):
         """
         初始化 API Client
@@ -754,7 +754,7 @@ class StampAPIClient:
                 ws.send(json.dumps({"action": "ping"}))
             except Exception as e:
                 logger.error(f"WebSocket error: {e}")
-                break
+                raise
     
     def wait_for_job(
         self,
