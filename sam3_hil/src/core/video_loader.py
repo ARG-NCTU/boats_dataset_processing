@@ -63,7 +63,7 @@ class VideoLoader:
         metadata: VideoMetadata object with video properties
     """
     
-    SUPPORTED_FORMATS = {'.mp4', '.avi', '.mov', '.mkv', '.webm', '.m4v'}
+    SUPPORTED_FORMATS = {'.mp4', '.avi', '.mov', '.mkv', '.webm', '.m4v', '.MP4', '.AVI', '.MOV', '.MKV', '.WEBM', '.M4V'}
     
     def __init__(self, video_path: str, cache_size: int = 128):
         """
