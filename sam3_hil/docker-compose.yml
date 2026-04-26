@@ -46,7 +46,7 @@ services:
       - PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True,garbage_collection_threshold:0.6 
     
 
-    command: ["python", "run_server.py", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+    command: ["python", "run_server.py", "--host", "0.0.0.0", "--port", "8000"]
 
 
     # 重啟策略
