@@ -230,6 +230,47 @@ class EfficiencyMetrics:
         )
 
 
+@dataclass
+class Layer2Metrics:
+    """Offline thesis metrics derived from JSONL action logs."""
+
+    total_frames: int
+    reviewed_frames: int
+    rfr: float
+
+    reviewed_units: int
+    pass_through_count: int
+    geometry_edit_count: int
+    reject_count: int
+
+    ptr: float
+    ger: float
+    reject_rate: float
+
+    manual_add_count: int
+    final_object_count: int
+    mar: float
+
+    outcome_counts: Dict[str, int] = field(default_factory=dict)
+    reviewed_frame_indices: List[int] = field(default_factory=list)
+    mar_fallback_used: bool = False
+
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+
+    def __str__(self) -> str:
+        fallback = " (fallback denominator)" if self.mar_fallback_used else ""
+        return (
+            "=== STAMP Layer 2 Metrics ===\n"
+            f"RFR: {self.rfr:.4f} ({self.reviewed_frames}/{self.total_frames} frames)\n"
+            f"PTR: {self.ptr:.4f} ({self.pass_through_count}/{self.reviewed_units} units)\n"
+            f"GER: {self.ger:.4f} ({self.geometry_edit_count}/{self.reviewed_units} units)\n"
+            f"Reject Rate: {self.reject_rate:.4f} ({self.reject_count}/{self.reviewed_units} units)\n"
+            f"MAR: {self.mar:.4f} ({self.manual_add_count}/{self.final_object_count} objects){fallback}\n"
+            f"Outcome Counts: {self.outcome_counts}"
+        )
+
+
 # =============================================================================
 # Action Logger (JSON Lines)
 # =============================================================================
@@ -822,6 +863,29 @@ class SessionAnalyzer:
         metrics = analyzer.analyze_file("session.jsonl")
         print(metrics)
     """
+
+    _LAYER2_REVIEW_ACTIONS = {
+        ActionType.APPROVE_OBJECT.value,
+        ActionType.REJECT_OBJECT.value,
+        ActionType.APPLY_REFINE.value,
+        ActionType.PROPAGATE.value,
+        ActionType.ADD_OBJECT.value,
+        ActionType.DELETE_OBJECT.value,
+        ActionType.MERGE_OBJECTS.value,
+        ActionType.SWAP_LABELS.value,
+        ActionType.POSITIVE_CLICK.value,
+        ActionType.NEGATIVE_CLICK.value,
+    }
+    _LAYER2_REJECT_ACTIONS = {
+        ActionType.REJECT_OBJECT.value,
+        ActionType.DELETE_OBJECT.value,
+    }
+    _LAYER2_REFINE_ACTIONS = {
+        ActionType.APPLY_REFINE.value,
+        ActionType.PROPAGATE.value,
+        ActionType.MERGE_OBJECTS.value,
+        ActionType.SWAP_LABELS.value,
+    }
     
     @staticmethod
     def load_jsonl(filepath: Union[str, Path]) -> List[ActionRecord]:
@@ -924,6 +988,140 @@ class SessionAnalyzer:
             total_seconds=total_seconds,
             action_counts=action_counts,
             frame_edit_counts=frame_edit_counts,
+        )
+
+    @staticmethod
+    def _infer_total_frames(actions: List[ActionRecord]) -> int:
+        for action in actions:
+            if action.action_type in {ActionType.SESSION_START.value, ActionType.VIDEO_LOADED.value}:
+                total_frames = action.metadata.get("total_frames", 0)
+                if total_frames:
+                    return int(total_frames)
+        return 0
+
+    @staticmethod
+    def _object_ids_for_action(action: ActionRecord) -> List[Any]:
+        object_ids: List[Any] = []
+
+        for value in (action.obj_id, action.source_obj_id, action.target_obj_id):
+            if value is not None:
+                object_ids.append(value)
+
+        for key in ("obj_a", "obj_b", "source_obj_id", "target_obj_id"):
+            value = action.metadata.get(key)
+            if value is not None:
+                object_ids.append(value)
+
+        return list(dict.fromkeys(object_ids))
+
+    @staticmethod
+    def _layer2_unit_key(action: ActionRecord, obj_id: Any, unit_mode: str) -> Optional[Any]:
+        if unit_mode == "object":
+            return obj_id
+        if unit_mode == "frame_object":
+            if action.frame_idx is None:
+                return None
+            return (action.frame_idx, obj_id)
+        raise ValueError("unit_mode must be 'object' or 'frame_object'")
+
+    @classmethod
+    def analyze_layer2_actions(
+        cls,
+        actions: List[ActionRecord],
+        total_frames: Optional[int] = None,
+        unit_mode: str = "object",
+        final_object_count: Optional[int] = None,
+    ) -> Layer2Metrics:
+        """
+        Analyze Layer 2 thesis metrics from JSONL action records.
+
+        RFR is event-based because current frame navigation logs are sparse and
+        cannot support reliable dwell-time analysis.
+        """
+        if unit_mode not in {"object", "frame_object"}:
+            raise ValueError("unit_mode must be 'object' or 'frame_object'")
+
+        total_frames = total_frames if total_frames is not None else cls._infer_total_frames(actions)
+        total_frames = total_frames or 0
+
+        reviewed_frame_indices: Set[int] = set()
+        unit_events: Dict[Any, Set[str]] = {}
+        reviewed_non_manual_object_ids: Set[Any] = set()
+        manual_add_count = 0
+
+        for action in actions:
+            action_type = action.action_type
+            if action_type not in cls._LAYER2_REVIEW_ACTIONS:
+                continue
+
+            if action.frame_idx is not None:
+                reviewed_frame_indices.add(action.frame_idx)
+
+            if action_type == ActionType.ADD_OBJECT.value:
+                manual_add_count += 1
+                continue
+
+            for obj_id in cls._object_ids_for_action(action):
+                key = cls._layer2_unit_key(action, obj_id, unit_mode)
+                if key is None:
+                    continue
+                unit_events.setdefault(key, set()).add(action_type)
+                reviewed_non_manual_object_ids.add(obj_id)
+
+        outcome_counts = {
+            "accept": 0,
+            "refine": 0,
+            "reject": 0,
+            "unresolved": 0,
+        }
+
+        for events in unit_events.values():
+            if events & cls._LAYER2_REJECT_ACTIONS:
+                outcome_counts["reject"] += 1
+            elif events & cls._LAYER2_REFINE_ACTIONS:
+                outcome_counts["refine"] += 1
+            elif ActionType.APPROVE_OBJECT.value in events:
+                outcome_counts["accept"] += 1
+            else:
+                outcome_counts["unresolved"] += 1
+
+        reviewed_units = len(unit_events)
+        pass_through_count = outcome_counts["accept"]
+        geometry_edit_count = outcome_counts["refine"]
+        reject_count = outcome_counts["reject"]
+
+        ptr = (pass_through_count / reviewed_units) if reviewed_units else 0.0
+        ger = (geometry_edit_count / reviewed_units) if reviewed_units else 0.0
+        reject_rate = (reject_count / reviewed_units) if reviewed_units else 0.0
+
+        if final_object_count is None:
+            final_object_count_value = manual_add_count + len(reviewed_non_manual_object_ids)
+            mar_fallback_used = True
+        else:
+            final_object_count_value = final_object_count
+            mar_fallback_used = False
+        mar = (manual_add_count / final_object_count_value) if final_object_count_value else 0.0
+
+        reviewed_frames = len(reviewed_frame_indices)
+        rfr = (reviewed_frames / total_frames) if total_frames else 0.0
+
+        return Layer2Metrics(
+            total_frames=total_frames,
+            reviewed_frames=reviewed_frames,
+            rfr=rfr,
+            reviewed_units=reviewed_units,
+            pass_through_count=pass_through_count,
+            geometry_edit_count=geometry_edit_count,
+            reject_count=reject_count,
+            ptr=ptr,
+            ger=ger,
+            reject_rate=reject_rate,
+            manual_add_count=manual_add_count,
+            final_object_count=final_object_count_value,
+            mar=mar,
+            outcome_counts=outcome_counts,
+            reviewed_frame_indices=sorted(reviewed_frame_indices),
+            mar_fallback_used=mar_fallback_used,
         )
     
     def analyze_file(self, filepath: Union[str, Path]) -> EfficiencyMetrics:
