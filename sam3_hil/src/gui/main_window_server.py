@@ -4212,6 +4212,7 @@ class STAMPMainWindow(QMainWindow):
         progress.setWindowModality(Qt.WindowModality.WindowModal)
         progress.setMinimumDuration(0)
         progress.setValue(0)
+        add_object_logged = False
         
         try:
             # 嘗試使用 SAM3 Video Predictor
@@ -4258,6 +4259,11 @@ class STAMPMainWindow(QMainWindow):
             # 更新 object status
             if self.add_object_mode:
                 self.object_status[obj_id] = "accepted"
+                self.action_logger.log_add_object(
+                    frame_idx=start_frame,
+                    obj_id=obj_id
+                )
+                add_object_logged = True
             
             # === ActionLogger: 記錄傳播操作 ===
             end_frame = total_frames - 1
@@ -4301,6 +4307,11 @@ class STAMPMainWindow(QMainWindow):
             # 更新 object status
             if self.add_object_mode:
                 self.object_status[obj_id] = "accepted"
+                if not add_object_logged:
+                    self.action_logger.log_add_object(
+                        frame_idx=start_frame,
+                        obj_id=obj_id
+                    )
             
             # 同樣需要正確順序
             self._reanalyze_with_preserved_edits()
