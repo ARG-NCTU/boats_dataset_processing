@@ -379,7 +379,7 @@ python tools/analyze_stamp_metrics.py logs/session.jsonl --unit-mode object --fi
 python tools/analyze_stamp_metrics.py logs/session.jsonl --unit-mode frame_object --final-object-count 12 --output metrics.json
 ```
 
-Use `--unit-mode object` for video mode and `--unit-mode frame_object` for image-folder mode. Pass `--final-object-count` for thesis reporting; otherwise MAR is marked as using a fallback denominator.
+Use `--unit-mode object` for video mode, `--unit-mode frame_object` for image-folder mode, and `--unit-mode instance` when object IDs may be reused after add/merge/delete operations. Pass `--final-object-count` for thesis reporting; otherwise MAR is marked as using a fallback denominator.
 
 ---
 
