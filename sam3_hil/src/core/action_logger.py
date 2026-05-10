@@ -1015,14 +1015,24 @@ class SessionAnalyzer:
         return list(dict.fromkeys(object_ids))
 
     @staticmethod
-    def _layer2_unit_key(action: ActionRecord, obj_id: Any, unit_mode: str) -> Optional[Any]:
+    def _layer2_unit_key(
+        action: ActionRecord,
+        obj_id: Any,
+        unit_mode: str,
+        object_generations: Optional[Dict[Any, int]] = None,
+    ) -> Optional[Any]:
         if unit_mode == "object":
             return obj_id
         if unit_mode == "frame_object":
             if action.frame_idx is None:
                 return None
             return (action.frame_idx, obj_id)
-        raise ValueError("unit_mode must be 'object' or 'frame_object'")
+        if unit_mode == "instance":
+            generation = 0
+            if object_generations is not None:
+                generation = object_generations.get(obj_id, 0)
+            return (obj_id, generation)
+        raise ValueError("unit_mode must be 'object', 'frame_object', or 'instance'")
 
     @classmethod
     def analyze_layer2_actions(
@@ -1038,8 +1048,8 @@ class SessionAnalyzer:
         RFR is event-based because current frame navigation logs are sparse and
         cannot support reliable dwell-time analysis.
         """
-        if unit_mode not in {"object", "frame_object"}:
-            raise ValueError("unit_mode must be 'object' or 'frame_object'")
+        if unit_mode not in {"object", "frame_object", "instance"}:
+            raise ValueError("unit_mode must be 'object', 'frame_object', or 'instance'")
 
         total_frames = total_frames if total_frames is not None else cls._infer_total_frames(actions)
         total_frames = total_frames or 0
@@ -1047,6 +1057,7 @@ class SessionAnalyzer:
         reviewed_frame_indices: Set[int] = set()
         unit_events: Dict[Any, Set[str]] = {}
         reviewed_non_manual_object_ids: Set[Any] = set()
+        object_generations: Dict[Any, int] = {}
         manual_add_count = 0
 
         for action in actions:
@@ -1059,10 +1070,12 @@ class SessionAnalyzer:
 
             if action_type == ActionType.ADD_OBJECT.value:
                 manual_add_count += 1
+                if unit_mode == "instance" and action.obj_id is not None:
+                    object_generations[action.obj_id] = object_generations.get(action.obj_id, 0) + 1
                 continue
 
             for obj_id in cls._object_ids_for_action(action):
-                key = cls._layer2_unit_key(action, obj_id, unit_mode)
+                key = cls._layer2_unit_key(action, obj_id, unit_mode, object_generations)
                 if key is None:
                     continue
                 unit_events.setdefault(key, set()).add(action_type)
