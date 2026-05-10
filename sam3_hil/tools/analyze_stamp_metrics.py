@@ -22,9 +22,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("log_file", type=Path, help="Path to a STAMP JSONL session log.")
     parser.add_argument(
         "--unit-mode",
-        choices=["object", "frame_object"],
+        choices=["object", "frame_object", "instance"],
         default="object",
-        help="Use object for video mode or frame_object for image-folder mode.",
+        help=(
+            "Use object for video mode, frame_object for image-folder mode, "
+            "or instance to split reused object IDs after add_object events."
+        ),
     )
     parser.add_argument(
         "--total-frames",
