@@ -64,7 +64,7 @@ Another Client           ◄───────► │  │       ↓         
 | 4 | Interactive Refinement | Point-prompt mask correction | Core |
 | 5 | Optimized GUI | Timeline + keyboard shortcuts + batch operations | Core |
 | 6 | Export Module | COCO / Labelme / HuggingFace Parquet output | Core |
-| 7 | ActionLogger | Efficiency metrics tracking (TEO, EOR, CPO, SPF) | Core |
+| 7 | ActionLogger | Efficiency metrics tracking (TEO, EOR, CPO, SPF, RFR, PTR, GER, MAR) | Core |
 | 8 | Jitter Detection | Tracking failure detection (scene-dependent, optional) | Auxiliary |
 | 9 | Maritime ROI | Horizon detection for sky filtering (scene-dependent, optional) | Auxiliary |
 
@@ -249,7 +249,7 @@ sam3_hil/
 │   ├── core/
 │   │   ├── sam3_engine.py      # SAM3 inference wrapper
 │   │   ├── confidence_analyzer.py  # Presence Score classification
-│   │   ├── action_logger.py    # Efficiency metrics (TEO, EOR, CPO, SPF)
+│   │   ├── action_logger.py    # Efficiency metrics and Layer 2 post-processing
 │   │   ├── exporter.py         # Multi-format export
 │   │   ├── video_loader.py     # Video/image I/O with LRU cache
 │   │   ├── jitter_detector.py  # Temporal quality control (optional)
@@ -361,6 +361,25 @@ STAMP tracks the following metrics via ActionLogger:
 | **FCR** | Frame Coverage Rate | Unique edited frames / total frames |
 | **CPO** | Clicks Per Object | Total clicks / unique objects |
 | **SPF** | Seconds Per Frame | Total annotation time / total frames |
+
+Layer 2 thesis metrics are computed offline from JSONL action logs:
+
+| Metric | Definition |
+|--------|------------|
+| **RFR** | Unique frames/images with review or edit events / total frames |
+| **PTR** | Accepted reviewed units / reviewed units |
+| **GER** | Geometry-edited reviewed units / reviewed units |
+| **Reject Rate** | Rejected or deleted reviewed units / reviewed units |
+| **MAR** | Manual add events / final object count |
+
+Run the offline analyzer from `sam3_hil/`:
+
+```bash
+python tools/analyze_stamp_metrics.py logs/session.jsonl --unit-mode object --final-object-count 12
+python tools/analyze_stamp_metrics.py logs/session.jsonl --unit-mode frame_object --final-object-count 12 --output metrics.json
+```
+
+Use `--unit-mode object` for video mode, `--unit-mode frame_object` for image-folder mode, and `--unit-mode instance` when object IDs may be reused after add/merge/delete operations. Pass `--final-object-count` for thesis reporting; otherwise MAR is marked as using a fallback denominator.
 
 ---
 

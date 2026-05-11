@@ -12,8 +12,8 @@ class TestConfidenceConfig:
     def test_default_thresholds(self):
         from src.config import config
         
-        assert config.confidence.high_threshold == 0.9
-        assert config.confidence.low_threshold == 0.7
+        assert config.confidence.high_threshold == 0.8
+        assert config.confidence.low_threshold == 0.5
         
     def test_threshold_ordering(self):
         """High threshold must be > low threshold."""
@@ -114,28 +114,28 @@ class TestFrameStatusLogic:
     """Test the frame status classification logic from the prompt."""
     
     def test_high_confidence_auto_save(self):
-        """Score >= 0.9 should be AUTO_SAVE."""
+        """Score >= 0.8 should be AUTO_SAVE."""
         from src.config import config
         
-        scores = [0.95, 0.92, 0.91]
+        scores = [0.95, 0.82, 0.91]
         min_score = min(scores)
         
         assert min_score >= config.confidence.high_threshold
         
     def test_low_confidence_needs_review(self):
-        """Score < 0.7 should be NEEDS_REVIEW."""
+        """Score < 0.5 should be NEEDS_REVIEW."""
         from src.config import config
         
-        scores = [0.85, 0.65, 0.90]  # min is 0.65
+        scores = [0.85, 0.45, 0.90]  # min is 0.45
         min_score = min(scores)
         
         assert min_score < config.confidence.low_threshold
         
     def test_uncertain_range(self):
-        """Score in [0.7, 0.9) should be UNCERTAIN."""
+        """Score in [0.5, 0.8) should be UNCERTAIN."""
         from src.config import config
         
-        scores = [0.88, 0.75, 0.82]  # min is 0.75
+        scores = [0.88, 0.65, 0.82]  # min is 0.65
         min_score = min(scores)
         
         assert config.confidence.low_threshold <= min_score < config.confidence.high_threshold

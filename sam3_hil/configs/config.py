@@ -40,14 +40,14 @@ class ConfidenceConfig(BaseSettings):
     
     # High confidence → Auto-save (GREEN)
     high_threshold: float = Field(
-        default=0.9,
+        default=0.8,
         ge=0.0, le=1.0,
         description="Score >= this → auto-save without human review"
     )
     
     # Low confidence → Needs Review (RED)
     low_threshold: float = Field(
-        default=0.7,
+        default=0.5,
         ge=0.0, le=1.0,
         description="Score < this → requires human review"
     )

@@ -1163,7 +1163,7 @@ class SAM3Engine:
 def visualize_frame_results(
     frame: np.ndarray,
     result: FrameResult,
-    high_threshold: float = 0.85,
+    high_threshold: float = 0.80,
     low_threshold: float = 0.50
 ) -> np.ndarray:
     """
@@ -1259,7 +1259,7 @@ def save_visualization_video(
     video_path: str,
     results: Dict[int, FrameResult],
     output_path: str,
-    high_threshold: float = 0.85,
+    high_threshold: float = 0.80,
     low_threshold: float = 0.50,
     max_frames: int = 0
 ) -> None:
