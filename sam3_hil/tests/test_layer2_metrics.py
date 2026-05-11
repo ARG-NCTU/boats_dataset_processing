@@ -108,6 +108,36 @@ def test_unit_mode_object_and_frame_object_use_different_denominators():
     assert frame_object_metrics.reviewed_units == 2
 
 
+def test_instance_mode_splits_reused_object_id_after_merge_and_add():
+    actions = [
+        action(ActionType.ADD_OBJECT, frame_idx=0, obj_id=7),
+        action(ActionType.PROPAGATE, frame_idx=0, obj_id=7),
+        action(ActionType.MERGE_OBJECTS, frame_idx=4, source_obj_id=7, target_obj_id=3),
+        action(ActionType.ADD_OBJECT, frame_idx=5, obj_id=7),
+        action(ActionType.APPROVE_OBJECT, frame_idx=5, obj_id=7),
+    ]
+
+    object_metrics = SessionAnalyzer.analyze_layer2_actions(
+        actions,
+        total_frames=10,
+        unit_mode="object",
+        final_object_count=3,
+    )
+    instance_metrics = SessionAnalyzer.analyze_layer2_actions(
+        actions,
+        total_frames=10,
+        unit_mode="instance",
+        final_object_count=3,
+    )
+
+    assert object_metrics.reviewed_units == 2
+    assert object_metrics.geometry_edit_count == 2
+    assert instance_metrics.reviewed_units == 3
+    assert instance_metrics.geometry_edit_count == 2
+    assert instance_metrics.pass_through_count == 1
+    assert instance_metrics.manual_add_count == 2
+
+
 def test_invalid_unit_mode_is_rejected():
     with pytest.raises(ValueError, match="unit_mode"):
         SessionAnalyzer.analyze_layer2_actions(
