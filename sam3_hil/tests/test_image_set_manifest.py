@@ -52,3 +52,23 @@ def test_image_manifest_is_reproducible_with_same_seed(tmp_path):
     generate_image_set_manifest(image_dir, second, seed=7)
 
     assert first.read_text(encoding="utf-8") == second.read_text(encoding="utf-8")
+
+
+def test_copies_selected_images_into_stratum_task_folders(tmp_path):
+    image_dir = tmp_path / "images"
+    manifest = tmp_path / "image_manifest.csv"
+    task_dir = tmp_path / "tasks"
+    _make_images(image_dir)
+
+    generate_image_set_manifest(
+        input_dir=image_dir,
+        output_path=manifest,
+        task_output_dir=task_dir,
+        seed=20260511,
+    )
+
+    for stratum in ("E1", "E2", "E3", "E4"):
+        files = sorted((task_dir / f"{stratum}_20").iterdir())
+        assert len(files) == 20
+        assert all(path.name.startswith("E_") for path in files)
+        assert all(path.suffix == ".jpg" for path in files)

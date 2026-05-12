@@ -8,6 +8,7 @@ fixed random seed, and marks the first 20 images per stratum as task images.
 import argparse
 import csv
 import random
+import shutil
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, Optional
@@ -109,10 +110,23 @@ def _write_rows(rows: Iterable[ImageManifestRow], output_path: Path) -> None:
             writer.writerow(row.__dict__)
 
 
+def _copy_selected_images(rows: Iterable[ImageManifestRow], task_output_dir: Path) -> None:
+    task_output_dir.mkdir(parents=True, exist_ok=True)
+    for row in rows:
+        if not row.selected_for_task:
+            continue
+        source_path = Path(row.image_path)
+        stratum_dir = task_output_dir / f"{row.stratum}_20"
+        stratum_dir.mkdir(parents=True, exist_ok=True)
+        destination = stratum_dir / f"{row.image_id}{source_path.suffix.lower()}"
+        shutil.copy2(source_path, destination)
+
+
 def generate_image_set_manifest(
     input_dir: Path,
     output_path: Path,
     selected_output_path: Optional[Path] = None,
+    task_output_dir: Optional[Path] = None,
     *,
     seed: int = DEFAULT_SEED,
     strata: int = DEFAULT_STRATA,
@@ -133,6 +147,8 @@ def generate_image_set_manifest(
     if selected_output_path is not None:
         selected_rows = [row for row in rows if row.selected_for_task]
         _write_rows(selected_rows, Path(selected_output_path))
+    if task_output_dir is not None:
+        _copy_selected_images(rows, Path(task_output_dir))
     return rows
 
 
@@ -141,6 +157,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--input-dir", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--selected-output", type=Path, default=None)
+    parser.add_argument(
+        "--task-output-dir",
+        type=Path,
+        default=None,
+        help="Optional directory for selected images copied into E1_20-E4_20 folders.",
+    )
     parser.add_argument("--seed", type=int, default=DEFAULT_SEED)
     parser.add_argument("--strata", type=int, default=DEFAULT_STRATA)
     parser.add_argument("--items-per-stratum", type=int, default=DEFAULT_ITEMS_PER_STRATUM)
@@ -155,6 +177,7 @@ def main() -> int:
         input_dir=args.input_dir,
         output_path=args.output,
         selected_output_path=args.selected_output,
+        task_output_dir=args.task_output_dir,
         seed=args.seed,
         strata=args.strata,
         items_per_stratum=args.items_per_stratum,
@@ -165,6 +188,8 @@ def main() -> int:
     print(f"Wrote {len(rows)} image rows to {args.output}")
     if args.selected_output:
         print(f"Wrote {selected_count} selected task rows to {args.selected_output}")
+    if args.task_output_dir:
+        print(f"Copied selected task images to {args.task_output_dir}")
     return 0
 
 
