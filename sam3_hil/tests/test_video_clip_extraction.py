@@ -86,6 +86,20 @@ def test_random_start_frame_is_reproducible_with_same_seed():
     assert 0 <= first <= 30
 
 
+def test_random_start_frame_can_be_limited_to_temporal_stratum():
+    start = resolve_start_frame(
+        total_frames=200,
+        num_frames=20,
+        start_frame=None,
+        random_mode=True,
+        seed=20260511,
+        stratum="Q3",
+        strata=4,
+    )
+
+    assert 100 <= start <= 130
+
+
 def test_rejects_clip_range_beyond_source_video(tmp_path):
     source = tmp_path / "source.mp4"
     output = tmp_path / "clip.mp4"
