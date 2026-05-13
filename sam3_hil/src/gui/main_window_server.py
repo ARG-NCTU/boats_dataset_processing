@@ -1161,6 +1161,7 @@ class STAMPMainWindow(QMainWindow):
         
         # 物件狀態（審閱結果）
         self.object_status: Dict[int, str] = {}  # obj_id -> status
+        self.ignored_obj_ids: Set[int] = set()
         
         # Refinement 狀態
         self.refinement_active = False
@@ -1609,6 +1610,9 @@ class STAMPMainWindow(QMainWindow):
             delete_action.triggered.connect(lambda: self.delete_object(obj_id))
         
         # 只刪除當前幀（兩種模式都有）
+        ignore_action = menu.addAction("Ignore / Out of Scope")
+        ignore_action.triggered.connect(lambda: self.ignore_object(obj_id))
+
         delete_this_action = menu.addAction("Delete This Detection Only")
         # Independent 模式用物件所在的幀，Video 模式用當前顯示的幀
         target_frame = frame_idx if frame_idx is not None else self.current_frame
@@ -1638,6 +1642,69 @@ class STAMPMainWindow(QMainWindow):
         # 顯示選單
         menu.exec(self.object_list.mapToGlobal(position))
     
+    def _drop_object_status(self, obj_id: int):
+        """Remove review status entries for an object across all modes."""
+        keys_to_remove = []
+        for key in self.object_status:
+            if key == obj_id:
+                keys_to_remove.append(key)
+            elif isinstance(key, str) and key.rsplit("_", 1)[-1] == str(obj_id):
+                keys_to_remove.append(key)
+
+        for key in keys_to_remove:
+            del self.object_status[key]
+
+    def ignore_object(self, obj_id: int):
+        """
+        Hide an out-of-scope object from the study pipeline without logging it as delete.
+
+        This is intended for ego-vessel / protocol-exclusion objects. It removes the
+        object from rendered detections, object list, timeline, export, and analysis.
+        """
+        obj_id = int(obj_id)
+        affected_frames = 0
+        affected_detections = 0
+
+        for frame_result in self.sam3_results.values():
+            before_count = len(frame_result.detections)
+            frame_result.detections = [
+                det for det in frame_result.detections
+                if det.obj_id != obj_id
+            ]
+            removed_count = before_count - len(frame_result.detections)
+            if removed_count:
+                affected_frames += 1
+                affected_detections += removed_count
+
+        if affected_detections == 0:
+            self.statusBar().showMessage(f"Object {obj_id} was already ignored or not found")
+            return
+
+        self.ignored_obj_ids.add(obj_id)
+        self._drop_object_status(obj_id)
+        self.action_logger.log_ignore_object(
+            frame_idx=self.current_frame,
+            obj_id=obj_id,
+            reason="out_of_scope",
+            scope="all_frames",
+            affected_frames=affected_frames,
+            affected_detections=affected_detections,
+        )
+
+        self._reanalyze_with_preserved_edits()
+        self.update_object_list()
+        self.update_analysis_display()
+        self.update_timeline()
+        self.display_frame(self.current_frame)
+
+        logger.info(
+            f"Ignored out-of-scope object {obj_id}: "
+            f"{affected_detections} detections across {affected_frames} frames"
+        )
+        self.statusBar().showMessage(
+            f"Ignored Object {obj_id} ({affected_detections} detections hidden)"
+        )
+
     def delete_object(self, obj_id: int):
         """
         完全刪除物件（從所有幀中移除）。
@@ -2214,6 +2281,9 @@ class STAMPMainWindow(QMainWindow):
         is_independent_mode = (self.processing_mode_combo.currentIndex() == 1)
         
         for det in result.detections:
+            if det.obj_id in self.ignored_obj_ids:
+                continue
+
             # 檢查物件狀態 - 根據模式使用不同的 key
             if is_independent_mode:
                 status_key = f"F{result.frame_index}_{det.obj_id}"
@@ -2354,6 +2424,7 @@ class STAMPMainWindow(QMainWindow):
             self.sam3_results = {}
             self.video_analysis = None
             self.object_status = {}
+            self.ignored_obj_ids.clear()
             self.object_list.clear()
             
             # 更新 UI
@@ -2436,6 +2507,7 @@ class STAMPMainWindow(QMainWindow):
             self.sam3_results = {}
             self.video_analysis = None
             self.object_status = {}
+            self.ignored_obj_ids.clear()
             self.object_list.clear()
             self._original_video_path = None
             self._server_video_path = None
@@ -2769,6 +2841,7 @@ class STAMPMainWindow(QMainWindow):
         self.detect_btn.setEnabled(True)
         
         # 儲存結果（可能已經在 on_batch_image_result 中部分儲存）
+        self.ignored_obj_ids.clear()
         self.sam3_results = result.get("results", self.sam3_results)
         
         # 分析結果
@@ -2977,6 +3050,7 @@ class STAMPMainWindow(QMainWindow):
         
         self.detect_btn.setEnabled(True)
         
+        self.ignored_obj_ids.clear()
         self.sam3_results = result["results"]
         
         # 儲存 Server 端的影片路徑（供後續 propagate 使用）
@@ -3351,6 +3425,9 @@ class STAMPMainWindow(QMainWindow):
         )
         
         for obj_summary in sorted_objects:
+            if obj_summary.obj_id in self.ignored_obj_ids:
+                continue
+
             category = self.analyzer.categorize(obj_summary.avg_score)
             
             # 建立列表項目
@@ -3388,6 +3465,9 @@ class STAMPMainWindow(QMainWindow):
         sorted_dets = sorted(frame_result.detections, key=lambda d: d.score, reverse=True)
         
         for det in sorted_dets:
+            if det.obj_id in self.ignored_obj_ids:
+                continue
+
             category = self.analyzer.categorize(det.score)
             composite_key = f"F{self.current_frame}_{det.obj_id}"
             
