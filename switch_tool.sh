@@ -60,6 +60,92 @@ start_existing_container() {
     fi
 }
 
+restart_existing_container() {
+    local name="$1"
+    if container_exists "$name"; then
+        echo "[restart] $name"
+        docker restart "$name" >/dev/null
+    else
+        echo "[warn] $name does not exist; use its normal run script to create it"
+        return 1
+    fi
+}
+
+container_host_port() {
+    local name="$1"
+    local container_port="${2:-8080/tcp}"
+    docker port "$name" "$container_port" 2>/dev/null \
+        | sed -n 's/.*:\([0-9][0-9]*\)$/\1/p' \
+        | head -n 1
+}
+
+wait_container_healthy() {
+    local name="$1"
+    local timeout_seconds="${2:-120}"
+    local started_at
+    local status
+    started_at="$(date +%s)"
+
+    while true; do
+        status="$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$name" 2>/dev/null || true)"
+        if [ "$status" = "healthy" ] || [ "$status" = "running" ]; then
+            echo "[ready] $name status=$status"
+            return 0
+        fi
+
+        if [ $(( $(date +%s) - started_at )) -ge "$timeout_seconds" ]; then
+            echo "[error] Timed out waiting for $name health. Current status=$status"
+            docker logs "$name" --tail 80 || true
+            return 1
+        fi
+
+        echo "[wait] $name status=$status"
+        sleep 3
+    done
+}
+
+wait_http_port() {
+    local url="$1"
+    local timeout_seconds="${2:-120}"
+    local started_at
+    started_at="$(date +%s)"
+
+    while true; do
+        if curl -sS --max-time 2 "$url" >/dev/null 2>&1; then
+            echo "[ready] $url"
+            return 0
+        fi
+
+        if [ $(( $(date +%s) - started_at )) -ge "$timeout_seconds" ]; then
+            echo "[error] Timed out waiting for $url"
+            return 1
+        fi
+
+        echo "[wait] $url"
+        sleep 3
+    done
+}
+
+start_cvat_sam() {
+    restart_existing_container "$CVAT_SAM" || {
+        echo "[hint] If the CVAT SAM function was removed, redeploy it from tools/cvat."
+        return 1
+    }
+
+    wait_container_healthy "$CVAT_SAM" 180
+
+    local port
+    port="$(container_host_port "$CVAT_SAM" "8080/tcp")"
+    if [ -z "$port" ]; then
+        echo "[error] Cannot find host port for $CVAT_SAM:8080/tcp"
+        docker ps --filter "name=^/$CVAT_SAM$" --format 'table {{.Names}}\t{{.Status}}\t{{.Ports}}'
+        return 1
+    fi
+
+    echo "[info] CVAT SAM host URL: http://127.0.0.1:$port/"
+    wait_http_port "http://127.0.0.1:$port/" 180
+}
+
 start_stamp_server() {
     echo "[start] $STAMP_SERVER via docker compose"
     docker compose -f "$STAMP_DIR/docker-compose.yml" --project-directory "$STAMP_DIR" up -d stamp-server
@@ -68,7 +154,7 @@ start_stamp_server() {
 show_status() {
     echo "=== Docker containers ==="
     docker ps -a --filter "name=^/($STAMP_GUI|$STAMP_SERVER|$CVAT_SAM|$LABELME_GPU)$" \
-        --format 'table {{.Names}}\t{{.Status}}\t{{.Image}}'
+        --format 'table {{.Names}}\t{{.Status}}\t{{.Ports}}\t{{.Image}}'
     echo
     echo "=== GPU usage ==="
     nvidia-smi
@@ -98,10 +184,7 @@ case "$tool" in
         stop_container "$STAMP_GUI"
         stop_container "$STAMP_SERVER"
         stop_container "$LABELME_GPU"
-        start_existing_container "$CVAT_SAM" || {
-            echo "[hint] If the CVAT SAM function was removed, redeploy it from tools/cvat."
-            exit 1
-        }
+        start_cvat_sam
         show_status
         ;;
 
