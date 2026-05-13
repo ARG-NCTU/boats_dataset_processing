@@ -58,6 +58,23 @@ def test_reject_and_delete_take_priority_over_accept_and_refine():
     assert metrics.geometry_edit_count == 0
 
 
+def test_ignore_object_excludes_object_from_layer2_metrics():
+    metrics = SessionAnalyzer.analyze_layer2_actions(
+        [
+            action(ActionType.IGNORE_OBJECT, frame_idx=1, obj_id=8),
+            action(ActionType.APPROVE_OBJECT, frame_idx=1, obj_id=8),
+            action(ActionType.DELETE_OBJECT, frame_idx=2, obj_id=8),
+        ],
+        total_frames=10,
+    )
+
+    assert metrics.reviewed_frames == 0
+    assert metrics.reviewed_units == 0
+    assert metrics.reject_count == 0
+    assert metrics.pass_through_count == 0
+    assert metrics.rfr == pytest.approx(0.0)
+
+
 def test_add_object_increases_mar():
     metrics = SessionAnalyzer.analyze_layer2_actions(
         [action(ActionType.ADD_OBJECT, frame_idx=5, obj_id=9)],
