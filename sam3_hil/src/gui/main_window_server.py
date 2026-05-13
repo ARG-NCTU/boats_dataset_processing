@@ -1156,6 +1156,7 @@ class STAMPMainWindow(QMainWindow):
         self.is_playing = False
         self.show_masks = True
         self.show_boxes = True
+        self.show_polygons = False
         self.show_horizon = False  # 顯示海平線
         
         # 物件狀態（審閱結果）
@@ -1294,6 +1295,12 @@ class STAMPMainWindow(QMainWindow):
         self.box_checkbox.setChecked(True)
         self.box_checkbox.stateChanged.connect(self.on_display_option_changed)
         control_layout.addWidget(self.box_checkbox)
+
+        self.polygon_checkbox = QCheckBox("Show Polygon")
+        self.polygon_checkbox.setChecked(False)
+        self.polygon_checkbox.setToolTip("Draw mask polygon outlines. Select an object to show only that object.")
+        self.polygon_checkbox.stateChanged.connect(self.on_display_option_changed)
+        control_layout.addWidget(self.polygon_checkbox)
         
         self.horizon_checkbox = QCheckBox("Show Horizon")
         self.horizon_checkbox.setChecked(False)
@@ -1550,6 +1557,13 @@ class STAMPMainWindow(QMainWindow):
             lambda: self.box_checkbox.setChecked(self.box_action.isChecked())
         )
         view_menu.addAction(self.box_action)
+
+        self.polygon_action = QAction("Show &Polygons", self, checkable=True)
+        self.polygon_action.setChecked(False)
+        self.polygon_action.triggered.connect(
+            lambda: self.polygon_checkbox.setChecked(self.polygon_action.isChecked())
+        )
+        view_menu.addAction(self.polygon_action)
         
         # Help 選單
         help_menu = menu_bar.addMenu("&Help")
@@ -2133,7 +2147,7 @@ class STAMPMainWindow(QMainWindow):
             return
         
         # 如果有偵測結果，疊加視覺化
-        if frame_idx in self.sam3_results and (self.show_masks or self.show_boxes):
+        if frame_idx in self.sam3_results and (self.show_masks or self.show_boxes or self.show_polygons):
             frame = self.visualize_frame(frame, self.sam3_results[frame_idx])
         
         # 繪製海平線（如果啟用）
@@ -2163,6 +2177,25 @@ class STAMPMainWindow(QMainWindow):
         if hasattr(self, 'timeline_widget'):
             self.timeline_widget.set_current_frame(frame_idx)
     
+    def get_selected_polygon_obj_id(self) -> Optional[int]:
+        """Return the selected object id for polygon-only viewing."""
+        if not hasattr(self, "object_list"):
+            return None
+
+        selected_items = self.object_list.selectedItems()
+        if not selected_items:
+            return None
+
+        item = selected_items[0]
+        item_widget = self.object_list.itemWidget(item)
+        if item_widget is not None:
+            obj_id = item_widget.property("obj_id")
+            if obj_id is not None:
+                return int(obj_id)
+
+        obj_id = item.data(Qt.ItemDataRole.UserRole)
+        return int(obj_id) if obj_id is not None else None
+
     def visualize_frame(
         self, 
         frame: np.ndarray, 
@@ -2171,9 +2204,11 @@ class STAMPMainWindow(QMainWindow):
         """疊加偵測結果視覺化。"""
         output = frame.copy()
         overlay = frame.copy()
+        polygon_contours = []
         
         high_thresh = self.high_thresh_spin.value()
         low_thresh = self.low_thresh_spin.value()
+        selected_polygon_obj_id = self.get_selected_polygon_obj_id()
         
         # 判斷是否為 Independent 模式
         is_independent_mode = (self.processing_mode_combo.currentIndex() == 1)
@@ -2204,16 +2239,29 @@ class STAMPMainWindow(QMainWindow):
             else:
                 border_color = color
             
+            mask = det.mask
+            if mask.shape[:2] != frame.shape[:2]:
+                mask = cv2.resize(
+                    mask.astype(np.float32),
+                    (frame.shape[1], frame.shape[0])
+                )
+            mask_bool = mask > 0.5
+
             # 繪製 mask
             if self.show_masks:
-                mask = det.mask
-                if mask.shape[:2] != frame.shape[:2]:
-                    mask = cv2.resize(
-                        mask.astype(np.float32),
-                        (frame.shape[1], frame.shape[0])
-                    )
-                mask_bool = mask > 0.5
                 overlay[mask_bool] = color
+
+            if self.show_polygons:
+                if selected_polygon_obj_id is not None and det.obj_id != selected_polygon_obj_id:
+                    pass
+                else:
+                    contour_mask = mask_bool.astype(np.uint8) * 255
+                    contours, _ = cv2.findContours(
+                        contour_mask,
+                        cv2.RETR_EXTERNAL,
+                        cv2.CHAIN_APPROX_SIMPLE
+                    )
+                    polygon_contours.extend(contours)
             
             # 繪製 bounding box
             if self.show_boxes:
@@ -2261,6 +2309,10 @@ class STAMPMainWindow(QMainWindow):
             result_frame = cv2.addWeighted(overlay, 0.3, output, 0.7, 0)
         else:
             result_frame = output
+
+        if self.show_polygons and polygon_contours:
+            cv2.drawContours(result_frame, polygon_contours, -1, (0, 0, 0), 4, cv2.LINE_AA)
+            cv2.drawContours(result_frame, polygon_contours, -1, (255, 255, 255), 2, cv2.LINE_AA)
         
         return result_frame
     
@@ -3314,6 +3366,7 @@ class STAMPMainWindow(QMainWindow):
             
             # 設置 property
             item_widget.setProperty("obj_id", obj_summary.obj_id)
+            item.setData(Qt.ItemDataRole.UserRole, obj_summary.obj_id)
             
             item.setSizeHint(item_widget.sizeHint())
             self.object_list.addItem(item)
@@ -3349,6 +3402,7 @@ class STAMPMainWindow(QMainWindow):
             item_widget.status_changed.connect(self.on_object_status_changed)
             
             item_widget.setProperty("obj_id", det.obj_id)
+            item.setData(Qt.ItemDataRole.UserRole, det.obj_id)
             item_widget.setProperty("frame_idx", self.current_frame)
             item_widget.setProperty("composite_key", composite_key)
             
@@ -3445,9 +3499,11 @@ class STAMPMainWindow(QMainWindow):
         """顯示選項改變。"""
         self.show_masks = self.mask_checkbox.isChecked()
         self.show_boxes = self.box_checkbox.isChecked()
+        self.show_polygons = self.polygon_checkbox.isChecked()
         self.show_horizon = self.horizon_checkbox.isChecked()
         self.mask_action.setChecked(self.show_masks)
         self.box_action.setChecked(self.show_boxes)
+        self.polygon_action.setChecked(self.show_polygons)
         self.display_frame(self.current_frame)
     
     def on_threshold_changed(self):
@@ -3791,6 +3847,8 @@ class STAMPMainWindow(QMainWindow):
         """當物件選擇改變時，更新 Refine 按鈕狀態。"""
         selected_items = self.object_list.selectedItems()
         self.refine_btn.setEnabled(len(selected_items) > 0 and not self.refinement_active)
+        if self.show_polygons:
+            self.display_frame(self.current_frame)
     
     def start_refinement_for_selected(self):
         """開始對選中的物件進行 refinement。"""
