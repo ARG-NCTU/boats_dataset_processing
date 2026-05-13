@@ -87,7 +87,7 @@ try:
         VideoAnalysis
     )
     from core.exporter import AnnotationExporter, ExportConfig, ExportStats
-    from gui.export_paths import get_default_export_dir
+    from gui.export_paths import get_default_export_dir, get_default_log_dir
     from gui.interactive_canvas import InteractiveCanvas, RefinementControlPanel, RefinementState
     from core.action_logger import ActionLogger, SessionAnalyzer, EfficiencyMetrics
 except ImportError as e:
@@ -2369,9 +2369,8 @@ class STAMPMainWindow(QMainWindow):
             self.detect_btn.setEnabled(True)
             self.add_object_btn.setEnabled(True)  # 開啟影片後就可以手動新增物件
             
-            # === ActionLogger: 創建/重新創建，使用影片所在目錄的 logs 子目錄 ===
-            video_dir = Path(file_path).parent
-            logs_dir = video_dir / "logs"
+            # === ActionLogger: 創建/重新創建，使用 export output 底下的 logs 子目錄 ===
+            logs_dir = get_default_log_dir()
             self.action_logger = ActionLogger(
                 output_dir=str(logs_dir),
                 format="jsonl",
@@ -2457,8 +2456,8 @@ class STAMPMainWindow(QMainWindow):
             # 自動切換到 Images 模式
             self.processing_mode_combo.setCurrentIndex(1)
             
-            # === ActionLogger: 創建，使用圖片資料夾的 logs 子目錄 ===
-            logs_dir = Path(folder_path) / "logs"
+            # === ActionLogger: 創建，使用 export output 底下的 logs 子目錄 ===
+            logs_dir = get_default_log_dir()
             self.action_logger = ActionLogger(
                 output_dir=str(logs_dir),
                 format="jsonl",
