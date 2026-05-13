@@ -8,6 +8,7 @@ behavior is now video clip extraction rather than participant sampling.
 import argparse
 import csv
 import random
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
@@ -19,6 +20,7 @@ DEFAULT_SEED = 20260511
 MANIFEST_FIELDS = [
     "source_video",
     "output_video",
+    "stratum",
     "clip_frame_idx",
     "source_frame_idx",
     "start_frame",
@@ -29,6 +31,7 @@ MANIFEST_FIELDS = [
     "height",
     "seed",
 ]
+STRATUM_RE = re.compile(r"^Q([1-9][0-9]*)$")
 
 
 @dataclass(frozen=True)
@@ -49,6 +52,7 @@ class ClipExtractionResult:
     num_frames: int
     metadata: VideoMetadata
     seed: Optional[int] = None
+    stratum: Optional[str] = None
 
 
 def read_video_metadata(input_path: Path) -> VideoMetadata:
@@ -86,6 +90,8 @@ def resolve_start_frame(
     start_frame: Optional[int],
     random_mode: bool,
     seed: Optional[int],
+    stratum: Optional[str] = None,
+    strata: int = 4,
 ) -> int:
     """Validate clip parameters and resolve the 0-based start frame."""
     if num_frames <= 0:
@@ -98,11 +104,30 @@ def resolve_start_frame(
         raise ValueError("--random and --start-frame cannot be used together")
     if not random_mode and start_frame is None:
         raise ValueError("--start-frame is required unless --random is used")
+    if stratum and not random_mode:
+        raise ValueError("--stratum can only be used with --random")
+    if strata <= 0:
+        raise ValueError("strata must be greater than 0")
 
     max_start = total_frames - num_frames
     if random_mode:
+        min_start = 0
+        if stratum:
+            match = STRATUM_RE.match(stratum)
+            if not match:
+                raise ValueError("stratum must use Q-style naming, e.g. Q1")
+            stratum_index = int(match.group(1))
+            if stratum_index < 1 or stratum_index > strata:
+                raise ValueError("stratum index is outside the configured strata range")
+            if total_frames % strata != 0:
+                raise ValueError("total_frames must divide evenly by strata")
+            stratum_width = total_frames // strata
+            min_start = (stratum_index - 1) * stratum_width
+            max_start = min(stratum_index * stratum_width - num_frames, max_start)
+            if max_start < min_start:
+                raise ValueError("num_frames does not fit inside the requested stratum")
         rng = random.Random(seed)
-        return rng.randint(0, max_start)
+        return rng.randint(min_start, max_start)
 
     assert start_frame is not None
     if start_frame < 0:
@@ -129,6 +154,7 @@ def _write_manifest(result: ClipExtractionResult) -> None:
                 {
                     "source_video": str(result.input_path),
                     "output_video": str(result.output_path),
+                    "stratum": result.stratum or "",
                     "clip_frame_idx": clip_frame_idx,
                     "source_frame_idx": source_frame_idx,
                     "start_frame": result.start_frame,
@@ -150,6 +176,7 @@ def extract_video_clip(
     num_frames: int,
     manifest_path: Optional[Path] = None,
     seed: Optional[int] = None,
+    stratum: Optional[str] = None,
 ) -> ClipExtractionResult:
     """Extract a contiguous frame range from input_path into output_path."""
     input_path = Path(input_path)
@@ -207,6 +234,7 @@ def extract_video_clip(
         num_frames=num_frames,
         metadata=metadata,
         seed=seed,
+        stratum=stratum,
     )
     _write_manifest(result)
     return result
@@ -248,6 +276,17 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Output CSV manifest path. Defaults to the output MP4 path with .csv.",
     )
+    parser.add_argument(
+        "--stratum",
+        default=None,
+        help="Optional Q-style temporal stratum for --random, e.g. Q1, Q2, Q3, Q4.",
+    )
+    parser.add_argument(
+        "--strata",
+        type=int,
+        default=4,
+        help="Number of equal temporal strata used with --stratum.",
+    )
     return parser.parse_args()
 
 
@@ -260,6 +299,8 @@ def main() -> int:
         start_frame=args.start_frame,
         random_mode=args.random,
         seed=args.seed,
+        stratum=args.stratum,
+        strata=args.strata,
     )
     result = extract_video_clip(
         input_path=args.input,
@@ -268,6 +309,7 @@ def main() -> int:
         num_frames=args.num_frames,
         manifest_path=args.manifest,
         seed=args.seed if args.random else None,
+        stratum=args.stratum,
     )
     print(
         "Wrote "

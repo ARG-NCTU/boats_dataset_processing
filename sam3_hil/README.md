@@ -16,7 +16,7 @@ STAMP transforms annotation from a labor-intensive process into an efficient hum
 ```
 SAM 3 Zero-Shot   →   Presence Score   →   Confidence        →   Human Review
 Discovery               Extraction          Classification         (if needed)
-                                            HIGH / UNC / LOW
+                                            HIGH / UNCERTAIN / LOW
 ```
 
 1. **SAM 3** detects all objects matching text prompts (e.g., `"ship, buoy"`)
