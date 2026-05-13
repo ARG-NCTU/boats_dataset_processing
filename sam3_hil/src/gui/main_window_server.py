@@ -3699,6 +3699,7 @@ class STAMPMainWindow(QMainWindow):
             progress.close()
             
             # === ActionLogger: 記錄匯出操作 ===
+            self.action_logger.relocate_output_dir(Path(stats.output_dir) / "logs")
             self.action_logger.log_export(
                 format=", ".join(stats.formats_exported),
                 output_path=str(stats.output_dir),

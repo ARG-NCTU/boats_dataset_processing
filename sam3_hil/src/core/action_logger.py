@@ -18,6 +18,7 @@ Author: Sonic (Assistive Robotics Lab, NYCU)
 import json
 import time
 import logging
+import shutil
 from pathlib import Path
 from datetime import datetime
 from dataclasses import dataclass, field, asdict
@@ -424,6 +425,48 @@ class ActionLogger:
         self.session = None
         
         return metrics
+
+    def relocate_output_dir(self, output_dir: Union[str, Path]) -> Path:
+        """
+        Move the active JSONL session log to a new output directory.
+
+        This keeps pre-export actions and post-export actions in one per-task
+        log folder after the export dataset directory is known.
+        """
+        new_output_dir = Path(output_dir)
+        new_output_dir.mkdir(parents=True, exist_ok=True)
+
+        if self.output_dir.resolve() == new_output_dir.resolve():
+            return self.output_dir
+
+        if self.session is None:
+            self.output_dir = new_output_dir
+            return self.output_dir
+
+        if self.format != "jsonl":
+            logger.warning("Relocating action logs is only supported for jsonl format")
+            return self.output_dir
+
+        session_id = self.session.session_id
+        was_open = self._file is not None
+        self._close_output_file()
+
+        for suffix in (".jsonl", "_summary.json"):
+            src = self.output_dir / f"{session_id}{suffix}"
+            dst = new_output_dir / f"{session_id}{suffix}"
+            if src.exists() and src.resolve() != dst.resolve():
+                if dst.exists():
+                    dst.unlink()
+                shutil.move(str(src), str(dst))
+
+        self.output_dir = new_output_dir
+
+        if was_open:
+            filepath = self.output_dir / f"{session_id}.jsonl"
+            self._file = open(filepath, "a", encoding="utf-8")
+            logger.info(f"Relocated JSONL file: {filepath}")
+
+        return self.output_dir
     
     # =========================================================================
     # Logging Methods
