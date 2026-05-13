@@ -87,6 +87,7 @@ try:
         VideoAnalysis
     )
     from core.exporter import AnnotationExporter, ExportConfig, ExportStats
+    from gui.export_paths import get_default_export_dir
     from gui.interactive_canvas import InteractiveCanvas, RefinementControlPanel, RefinementState
     from core.action_logger import ActionLogger, SessionAnalyzer, EfficiencyMetrics
 except ImportError as e:
@@ -698,9 +699,8 @@ class ExportDialog(QDialog):
         dir_layout.setContentsMargins(0, 0, 0, 0)
         dir_widget.setLayout(dir_layout)
         
-        # 預設輸出目錄：使用用戶的 home 目錄
-        import os
-        default_output_dir = os.path.expanduser("~/data/output")
+        # 預設輸出目錄：source run 用專案 data/output，打包版沿用 user home。
+        default_output_dir = str(get_default_export_dir())
         self.dir_input = QLineEdit(default_output_dir)
         dir_layout.addWidget(self.dir_input)
         
