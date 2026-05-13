@@ -362,6 +362,14 @@ STAMP tracks the following metrics via ActionLogger:
 | **CPO** | Clicks Per Object | Total clicks / unique objects |
 | **SPF** | Seconds Per Frame | Total annotation time / total frames |
 
+Action logs are written under the same default output root as exports:
+
+```text
+data/output/logs/
+```
+
+For Docker runs, ensure `data/` is bind-mounted so exported annotations and action logs are visible on the host.
+
 Layer 2 thesis metrics are computed offline from JSONL action logs:
 
 | Metric | Definition |
