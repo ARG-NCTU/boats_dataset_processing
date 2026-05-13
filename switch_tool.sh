@@ -8,6 +8,8 @@ STAMP_GUI="sam3_hil"
 STAMP_SERVER="stamp-server"
 CVAT_SAM="nuclio-nuclio-pth-facebookresearch-sam-vit-h"
 LABELME_GPU="argmm"
+CVAT_SERVER="cvat_server"
+CVAT_WORKER_ANNOTATION="cvat_worker_annotation"
 
 usage() {
     cat <<EOF
@@ -26,6 +28,10 @@ Known GPU containers:
   $STAMP_SERVER
   $CVAT_SAM
   $LABELME_GPU
+
+CVAT containers refreshed after SAM restart:
+  $CVAT_SERVER
+  $CVAT_WORKER_ANNOTATION
 EOF
 }
 
@@ -144,6 +150,10 @@ start_cvat_sam() {
 
     echo "[info] CVAT SAM host URL: http://127.0.0.1:$port/"
     wait_http_port "http://127.0.0.1:$port/" 180
+
+    echo "[restart] CVAT backend containers to refresh serverless function port"
+    restart_existing_container "$CVAT_SERVER" || true
+    restart_existing_container "$CVAT_WORKER_ANNOTATION" || true
 }
 
 start_stamp_server() {
