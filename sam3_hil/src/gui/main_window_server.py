@@ -1662,6 +1662,21 @@ class STAMPMainWindow(QMainWindow):
         object from rendered detections, object list, timeline, export, and analysis.
         """
         obj_id = int(obj_id)
+        reply = QMessageBox.question(
+            self,
+            "Ignore Object",
+            (
+                f"Ignore Object {obj_id} as out-of-scope?\n\n"
+                "This will hide it from all frames, the object list, timeline, "
+                "export, and Layer 2 metrics.\n\n"
+                "Use this for ego-vessel or other protocol-excluded objects."
+            ),
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+
         affected_frames = 0
         affected_detections = 0
 
