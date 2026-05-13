@@ -56,6 +56,7 @@ class ActionType(Enum):
     PROPAGATE = "propagate"
     ADD_OBJECT = "add_object"
     DELETE_OBJECT = "delete_object"
+    IGNORE_OBJECT = "ignore_object"
     MERGE_OBJECTS = "merge_objects"
     SWAP_LABELS = "swap_labels"
     
@@ -641,6 +642,30 @@ class ActionLogger:
             obj_id=obj_id,
             metadata={"delete_type": delete_type},
         ))
+
+    def log_ignore_object(
+        self,
+        frame_idx: int,
+        obj_id: int,
+        reason: str = "out_of_scope",
+        scope: str = "all_frames",
+        affected_frames: int = 0,
+        affected_detections: int = 0,
+    ):
+        """Log a protocol-level object exclusion that is not an annotation edit."""
+        self._log_action(ActionRecord(
+            action_type=ActionType.IGNORE_OBJECT.value,
+            timestamp=time.time(),
+            frame_idx=frame_idx,
+            obj_id=obj_id,
+            metadata={
+                "reason": reason,
+                "scope": scope,
+                "affected_frames": affected_frames,
+                "affected_detections": affected_detections,
+                "excluded_from_metrics": True,
+            },
+        ))
     
     def log_merge_objects(
         self,
@@ -1102,10 +1127,19 @@ class SessionAnalyzer:
         reviewed_non_manual_object_ids: Set[Any] = set()
         object_generations: Dict[Any, int] = {}
         manual_add_count = 0
+        ignored_object_ids = {
+            action.obj_id
+            for action in actions
+            if action.action_type == ActionType.IGNORE_OBJECT.value and action.obj_id is not None
+        }
 
         for action in actions:
             action_type = action.action_type
             if action_type not in cls._LAYER2_REVIEW_ACTIONS:
+                continue
+
+            action_object_ids = cls._object_ids_for_action(action)
+            if any(obj_id in ignored_object_ids for obj_id in action_object_ids):
                 continue
 
             if action.frame_idx is not None:
@@ -1117,7 +1151,7 @@ class SessionAnalyzer:
                     object_generations[action.obj_id] = object_generations.get(action.obj_id, 0) + 1
                 continue
 
-            for obj_id in cls._object_ids_for_action(action):
+            for obj_id in action_object_ids:
                 key = cls._layer2_unit_key(action, obj_id, unit_mode, object_generations)
                 if key is None:
                     continue
