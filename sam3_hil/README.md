@@ -362,10 +362,11 @@ STAMP tracks the following metrics via ActionLogger:
 | **CPO** | Clicks Per Object | Total clicks / unique objects |
 | **SPF** | Seconds Per Frame | Total annotation time / total frames |
 
-Action logs are written under the same default output root as exports:
+Action logs are written under the same default output root as exports. After
+export, the active session log is moved into the exported dataset folder:
 
 ```text
-data/output/logs/
+data/output/<dataset_name>/logs/
 ```
 
 For Docker runs, ensure `data/` is bind-mounted so exported annotations and action logs are visible on the host.
