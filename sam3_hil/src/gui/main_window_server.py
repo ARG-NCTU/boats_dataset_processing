@@ -639,6 +639,13 @@ class ObjectListItem(QWidget):
 # Export Dialog
 # =============================================================================
 
+class NoWheelComboBox(QComboBox):
+    """QComboBox variant that avoids accidental value changes from mouse wheel."""
+
+    def wheelEvent(self, event):
+        event.ignore()
+
+
 class ExportDialog(QDialog):
     """
     匯出設定對話框。
@@ -805,7 +812,7 @@ class ExportDialog(QDialog):
                 row_layout.addWidget(info_label)
                 
                 # Label combo
-                combo = QComboBox()
+                combo = NoWheelComboBox()
                 combo.addItems(self.labels)
                 combo.setMinimumWidth(120)
                 self.object_label_combos[obj_id] = combo
