@@ -234,6 +234,10 @@ python main_server.py
 
 All formats support automatic train/val/test split (default 80/10/10).
 
+If the selected export folder already exists, STAMP asks whether to clear and
+overwrite it, change the dataset name, or cancel the export. This avoids mixing
+new annotations with files left from an older export.
+
 ---
 
 ## Project Structure
