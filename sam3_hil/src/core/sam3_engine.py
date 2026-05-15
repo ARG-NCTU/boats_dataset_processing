@@ -99,6 +99,88 @@ class VideoSessionInfo:
     fps: float
 
 
+@dataclass
+class RefinementResult:
+    """Point refinement result with optional logits for iterative refinement."""
+    mask: np.ndarray
+    logits: Optional[np.ndarray] = None
+    score: float = 0.0
+
+
+REFINEMENT_LOGITS_SIZE = 256
+REFINEMENT_PRIOR_LOGIT_SCALE = 2.0
+
+
+def binary_mask_to_logit_prior(
+    mask: np.ndarray,
+    output_size: int = REFINEMENT_LOGITS_SIZE,
+    logit_scale: float = REFINEMENT_PRIOR_LOGIT_SCALE,
+) -> np.ndarray:
+    """Convert a binary mask into a conservative low-res logits prior."""
+    mask_float = np.asarray(mask, dtype=np.float32)
+    if mask_float.ndim == 3:
+        mask_float = mask_float[0]
+    if mask_float.size and np.max(mask_float) > 1.0:
+        mask_float = mask_float / 255.0
+
+    low_res = cv2.resize(
+        mask_float,
+        (output_size, output_size),
+        interpolation=cv2.INTER_LINEAR,
+    )
+    low_res = np.clip(low_res, 0.0, 1.0)
+    return ((low_res * 2.0 - 1.0) * float(logit_scale)).astype(np.float32)
+
+
+def replay_refinement_sequence(
+    refine_func,
+    image: np.ndarray,
+    points: np.ndarray,
+    labels: np.ndarray,
+    initial_mask_input: Optional[np.ndarray] = None,
+    mask_input: Optional[np.ndarray] = None,
+) -> RefinementResult:
+    """
+    Replay point prompts from scratch so undo/clear never reuse stale logits.
+    """
+    last_result: Optional[RefinementResult] = None
+    if initial_mask_input is None:
+        initial_mask_input = mask_input
+    mask_input = initial_mask_input
+    warned_missing_logits = False
+
+    for idx in range(len(points)):
+        multimask_output = mask_input is None and idx == 0
+        result = refine_func(
+            image=image,
+            points=points[:idx + 1],
+            labels=labels[:idx + 1],
+            mask_input=mask_input,
+            multimask_output=multimask_output,
+        )
+
+        if not hasattr(result, "mask"):
+            result = RefinementResult(mask=result)
+
+        last_result = result
+        mask_input = result.logits
+
+        if result.logits is None and idx < len(points) - 1 and not warned_missing_logits:
+            logger.warning(
+                "Refinement backend did not return logits; iterative replay is falling back to point-only prompts."
+            )
+            warned_missing_logits = True
+
+    if last_result is None:
+        return RefinementResult(
+            mask=np.zeros((image.shape[0], image.shape[1]), dtype=bool),
+            logits=initial_mask_input,
+            score=0.0,
+        )
+
+    return last_result
+
+
 # =============================================================================
 # Abstract Base Engine
 # =============================================================================
@@ -136,6 +218,21 @@ class BaseSAM3Engine(ABC):
             Refined mask (H, W) boolean array
         """
         pass
+
+    def refine_mask_with_logits(
+        self,
+        image: np.ndarray,
+        points: np.ndarray,
+        labels: np.ndarray,
+        mask_input: Optional[np.ndarray] = None,
+        multimask_output: bool = True,
+    ) -> RefinementResult:
+        """Refine a mask and return logits when the backend supports them."""
+        return RefinementResult(
+            mask=self.refine_mask(image, points, labels, mask_input),
+            logits=None,
+            score=0.0,
+        )
     
     @abstractmethod
     def start_video_session(self, video_path: str) -> str:
@@ -323,6 +420,22 @@ class SAM3GPUEngine(BaseSAM3Engine):
         labels: np.ndarray,
         mask_input: Optional[np.ndarray] = None
     ) -> np.ndarray:
+        """Refine a mask using point prompts."""
+        return self.refine_mask_with_logits(
+            image=image,
+            points=points,
+            labels=labels,
+            mask_input=mask_input,
+        ).mask
+
+    def refine_mask_with_logits(
+        self,
+        image: np.ndarray,
+        points: np.ndarray,
+        labels: np.ndarray,
+        mask_input: Optional[np.ndarray] = None,
+        multimask_output: bool = True,
+    ) -> RefinementResult:
         """
         Refine a mask using point prompts.
         
@@ -334,9 +447,10 @@ class SAM3GPUEngine(BaseSAM3Engine):
             points: Point coordinates (N, 2) array of [x, y]
             labels: Point labels (N,) array of 1 (positive) or 0 (negative)
             mask_input: Optional previous mask logits (256, 256) to use as hint
+            multimask_output: Whether to request multiple candidate masks
             
         Returns:
-            Refined mask (H, W) boolean array
+            RefinementResult containing mask and optional logits
         """
         from PIL import Image as PILImage
         
@@ -353,13 +467,23 @@ class SAM3GPUEngine(BaseSAM3Engine):
         
         # Set image and get inference state
         inference_state = self._image_processor.set_image(pil_image)
+
+        if mask_input is not None:
+            mask_input_array = np.asarray(mask_input)
+            if mask_input_array.ndim == 3:
+                mask_input_array = mask_input_array[0]
+            if mask_input_array.shape != (REFINEMENT_LOGITS_SIZE, REFINEMENT_LOGITS_SIZE) or mask_input_array.dtype == np.bool_:
+                mask_input = binary_mask_to_logit_prior(mask_input_array)
+            else:
+                mask_input = mask_input_array.astype(np.float32)
         
         # Check if we have points
         if len(points) == 0:
-            # Return original mask or empty mask
-            if mask_input is not None:
-                return mask_input.astype(bool)
-            return np.zeros((image.shape[0], image.shape[1]), dtype=bool)
+            return RefinementResult(
+                mask=np.zeros((image.shape[0], image.shape[1]), dtype=bool),
+                logits=mask_input,
+                score=0.0,
+            )
         
         # Prepare point prompts - SAM3 expects (N, 2) numpy arrays
         point_coords = points.astype(np.float32)  # (N, 2)
@@ -375,7 +499,7 @@ class SAM3GPUEngine(BaseSAM3Engine):
                 point_coords=point_coords,
                 point_labels=point_labels,
                 mask_input=mask_input[None, :, :] if mask_input is not None else None,
-                multimask_output=True,
+                multimask_output=multimask_output,
             )
             
             # Select best mask by score
@@ -386,20 +510,33 @@ class SAM3GPUEngine(BaseSAM3Engine):
                 # Ensure 2D
                 if best_mask.ndim == 3:
                     best_mask = best_mask[0]
-                
-                return (best_mask > 0.5).astype(bool)
+
+                best_logits = None
+                if logits is not None and len(logits) > best_idx:
+                    best_logits = logits[best_idx]
+                    if best_logits.ndim == 3:
+                        best_logits = best_logits[0]
+                    best_logits = best_logits.astype(np.float32)
+
+                return RefinementResult(
+                    mask=(best_mask > 0.5).astype(bool),
+                    logits=best_logits,
+                    score=float(scores[best_idx]),
+                )
             else:
-                # No mask produced, return original or empty
-                if mask_input is not None:
-                    return mask_input.astype(bool)
-                return np.zeros((image.shape[0], image.shape[1]), dtype=bool)
+                return RefinementResult(
+                    mask=np.zeros((image.shape[0], image.shape[1]), dtype=bool),
+                    logits=mask_input,
+                    score=0.0,
+                )
                 
         except Exception as e:
             logger.error(f"Error in refine_mask: {e}")
-            # Return original mask on error
-            if mask_input is not None:
-                return mask_input.astype(bool)
-            return np.zeros((image.shape[0], image.shape[1]), dtype=bool)
+            return RefinementResult(
+                mask=np.zeros((image.shape[0], image.shape[1]), dtype=bool),
+                logits=mask_input,
+                score=0.0,
+            )
     
     def propagate_mask(
         self,
@@ -764,6 +901,22 @@ class SAM3MockEngine(BaseSAM3Engine):
         labels: np.ndarray,
         mask_input: Optional[np.ndarray] = None
     ) -> np.ndarray:
+        """Mock mask refinement using point prompts."""
+        return self.refine_mask_with_logits(
+            image=image,
+            points=points,
+            labels=labels,
+            mask_input=mask_input,
+        ).mask
+
+    def refine_mask_with_logits(
+        self,
+        image: np.ndarray,
+        points: np.ndarray,
+        labels: np.ndarray,
+        mask_input: Optional[np.ndarray] = None,
+        multimask_output: bool = True,
+    ) -> RefinementResult:
         """
         Mock mask refinement using point prompts.
         
@@ -774,7 +927,14 @@ class SAM3MockEngine(BaseSAM3Engine):
         h, w = image.shape[:2]
         
         if mask_input is not None:
-            result_mask = mask_input.astype(np.float32).copy()
+            if mask_input.shape == (h, w):
+                result_mask = mask_input.astype(np.float32).copy()
+            else:
+                result_mask = cv2.resize(
+                    mask_input.astype(np.float32),
+                    (w, h),
+                    interpolation=cv2.INTER_LINEAR,
+                )
         else:
             result_mask = np.zeros((h, w), dtype=np.float32)
         
@@ -793,7 +953,9 @@ class SAM3MockEngine(BaseSAM3Engine):
                 result_mask[circle] = 0
         
         logger.debug(f"Mock refine_mask: {len(points)} points")
-        return result_mask > 0.5
+        mask = result_mask > 0.5
+        logits = binary_mask_to_logit_prior(mask)
+        return RefinementResult(mask=mask, logits=logits, score=1.0 if np.any(mask) else 0.0)
     
     def propagate_mask(
         self,
@@ -1085,6 +1247,29 @@ class SAM3Engine:
     ) -> np.ndarray:
         """Refine a mask using point prompts."""
         return self._engine.refine_mask(image, points, labels, mask_input)
+
+    def refine_mask_with_logits(
+        self,
+        image: np.ndarray,
+        points: np.ndarray,
+        labels: np.ndarray,
+        mask_input: Optional[np.ndarray] = None,
+        multimask_output: bool = True,
+    ) -> RefinementResult:
+        """Refine a mask and return logits when available."""
+        if hasattr(self._engine, "refine_mask_with_logits"):
+            return self._engine.refine_mask_with_logits(
+                image=image,
+                points=points,
+                labels=labels,
+                mask_input=mask_input,
+                multimask_output=multimask_output,
+            )
+        return RefinementResult(
+            mask=self._engine.refine_mask(image, points, labels, mask_input),
+            logits=None,
+            score=0.0,
+        )
     
     def start_video_session(self, video_path: str) -> str:
         """Start a video session."""

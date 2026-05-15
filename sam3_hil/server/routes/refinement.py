@@ -36,6 +36,8 @@ class RefineRequest(BaseModel):
     labels: List[int]  # 1=positive, 0=negative
     obj_id: Optional[int] = None
     current_mask: Optional[str] = None  # base64 encoded, for iterative refinement
+    mask_input_logits: Optional[str] = None  # base64 npy logits, for iterative refinement
+    multimask_output: bool = True
 
 
 class RefineResponse(BaseModel):
@@ -44,6 +46,7 @@ class RefineResponse(BaseModel):
     mask: str  # base64 encoded
     score: float
     bbox: List[int]
+    logits: Optional[str] = None  # base64 npy logits
     message: Optional[str] = None
 
 
@@ -76,6 +79,20 @@ def decode_base64_to_mask(base64_str: str) -> np.ndarray:
     if mask.ndim == 3:
         mask = mask[:, :, 0]
     return mask > 127  # Convert to boolean
+
+
+def encode_array_to_base64(array: np.ndarray) -> str:
+    """Convert numpy array to base64 npy string."""
+    buffer = io.BytesIO()
+    np.save(buffer, np.asarray(array, dtype=np.float32), allow_pickle=False)
+    buffer.seek(0)
+    return base64.b64encode(buffer.getvalue()).decode('utf-8')
+
+
+def decode_base64_to_array(base64_str: str) -> np.ndarray:
+    """Convert base64 npy string to numpy array."""
+    array_bytes = base64.b64decode(base64_str)
+    return np.load(io.BytesIO(array_bytes), allow_pickle=False)
 
 
 def get_bbox_from_mask(mask: np.ndarray) -> List[int]:
@@ -123,12 +140,20 @@ async def refine(request: RefineRequest):
                 y, x = np.ogrid[:img.shape[0], :img.shape[1]]
                 dist = np.sqrt((x - point.x)**2 + (y - point.y)**2)
                 mock_mask |= (dist < 50)
+
+        try:
+            from core.sam3_engine import binary_mask_to_logit_prior
+            mock_logits = encode_array_to_base64(binary_mask_to_logit_prior(mock_mask))
+        except Exception as e:
+            logger.warning(f"Mock refinement logits unavailable: {e}")
+            mock_logits = None
         
         return RefineResponse(
             success=True,
             mask=encode_mask_to_base64(mock_mask),
             score=0.85,
             bbox=get_bbox_from_mask(mock_mask),
+            logits=mock_logits,
             message="Mock mode - SAM3 not loaded",
         )
     
@@ -142,32 +167,49 @@ async def refine(request: RefineRequest):
         
         logger.info(f"Refining with {len(points)} points")
         
-        # Decode current mask if provided
+        # Decode iterative refinement hint if provided
         current_mask = None
-        if request.current_mask:
+        if request.mask_input_logits:
+            current_mask = decode_base64_to_array(request.mask_input_logits).astype(np.float32)
+        elif request.current_mask:
             current_mask = decode_base64_to_mask(request.current_mask)
+            try:
+                from core.sam3_engine import binary_mask_to_logit_prior
+                current_mask = binary_mask_to_logit_prior(current_mask)
+            except Exception as e:
+                logger.warning(f"Could not convert current_mask to logits prior: {e}")
         
         # Convert RGB to BGR if needed (SAM3 expects BGR)
         if len(img_array.shape) == 3 and img_array.shape[2] == 3:
             img_array = img_array[:, :, ::-1]  # RGB to BGR
         
-        # Run refinement - returns np.ndarray (boolean mask)
-        mask = engine.refine_mask(
-            image=img_array,
-            points=points,
-            labels=labels,
-            mask_input=current_mask,  # Note: parameter name is mask_input
-        )
-        
-        # refine_mask returns mask directly (np.ndarray), not a dict
-        # Score is not returned by refine_mask, estimate based on mask validity
-        score = 1.0 if np.any(mask) else 0.0
+        logits = None
+        if hasattr(engine, "refine_mask_with_logits"):
+            result = engine.refine_mask_with_logits(
+                image=img_array,
+                points=points,
+                labels=labels,
+                mask_input=current_mask,
+                multimask_output=request.multimask_output,
+            )
+            mask = result.mask
+            logits = result.logits
+            score = result.score
+        else:
+            mask = engine.refine_mask(
+                image=img_array,
+                points=points,
+                labels=labels,
+                mask_input=current_mask,
+            )
+            score = 1.0 if np.any(mask) else 0.0
         
         return RefineResponse(
             success=True,
             mask=encode_mask_to_base64(mask),
             score=float(score),
             bbox=get_bbox_from_mask(mask),
+            logits=encode_array_to_base64(logits) if logits is not None else None,
         )
         
     except Exception as e:

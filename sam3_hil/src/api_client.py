@@ -65,6 +65,15 @@ from PIL import Image
 import requests
 from loguru import logger
 
+try:
+    from core.sam3_engine import RefinementResult
+except ImportError:
+    @dataclass
+    class RefinementResult:
+        mask: np.ndarray
+        logits: Optional[np.ndarray] = None
+        score: float = 0.0
+
 # WebSocket 支援
 try:
     import websocket
@@ -193,6 +202,20 @@ def decode_base64_to_mask(base64_str: str) -> np.ndarray:
         mask = mask[:, :, 0]
     
     return mask > 127
+
+
+def encode_array_to_base64(array: np.ndarray) -> str:
+    """Encode a float array as base64 npy data."""
+    buffer = io.BytesIO()
+    np.save(buffer, np.asarray(array, dtype=np.float32), allow_pickle=False)
+    buffer.seek(0)
+    return base64.b64encode(buffer.getvalue()).decode('utf-8')
+
+
+def decode_base64_to_array(base64_str: str) -> np.ndarray:
+    """Decode a base64 npy float array."""
+    array_bytes = base64.b64decode(base64_str)
+    return np.load(io.BytesIO(array_bytes), allow_pickle=False)
 
 
 def decode_base64_to_image(base64_str: str) -> np.ndarray:
@@ -470,6 +493,22 @@ class StampAPIClient:
         labels: np.ndarray,
         mask_input: Optional[np.ndarray] = None
     ) -> np.ndarray:
+        """Refine a mask using point prompts."""
+        return self.refine_mask_with_logits(
+            image=image,
+            points=points,
+            labels=labels,
+            mask_input=mask_input,
+        ).mask
+
+    def refine_mask_with_logits(
+        self,
+        image: np.ndarray,
+        points: np.ndarray,
+        labels: np.ndarray,
+        mask_input: Optional[np.ndarray] = None,
+        multimask_output: bool = True,
+    ) -> RefinementResult:
         """
         用點擊修正 mask（同步）
         
@@ -486,10 +525,11 @@ class StampAPIClient:
             "image": encode_image_to_base64(image),
             "points": [{"x": int(p[0]), "y": int(p[1])} for p in points],
             "labels": [int(l) for l in labels],
+            "multimask_output": bool(multimask_output),
         }
         
         if mask_input is not None:
-            request_data["current_mask"] = encode_mask_to_base64(mask_input)
+            request_data["mask_input_logits"] = encode_array_to_base64(mask_input)
         
         try:
             response = requests.post(
@@ -500,19 +540,31 @@ class StampAPIClient:
             response.raise_for_status()
         except requests.exceptions.RequestException as e:
             logger.error(f"Refine request failed: {e}")
-            if mask_input is not None:
-                return mask_input
-            return np.zeros((image.shape[0], image.shape[1]), dtype=bool)
+            return RefinementResult(
+                mask=np.zeros((image.shape[0], image.shape[1]), dtype=bool),
+                logits=mask_input,
+                score=0.0,
+            )
         
         data = response.json()
         
         if not data.get("success", False):
             logger.warning(f"Refine failed: {data.get('message')}")
-            if mask_input is not None:
-                return mask_input
-            return np.zeros((image.shape[0], image.shape[1]), dtype=bool)
+            return RefinementResult(
+                mask=np.zeros((image.shape[0], image.shape[1]), dtype=bool),
+                logits=mask_input,
+                score=0.0,
+            )
         
-        return decode_base64_to_mask(data["mask"])
+        logits = None
+        if data.get("logits"):
+            logits = decode_base64_to_array(data["logits"]).astype(np.float32)
+
+        return RefinementResult(
+            mask=decode_base64_to_mask(data["mask"]),
+            logits=logits,
+            score=float(data.get("score", 0.0)),
+        )
     
     # =========================================================================
     # Jobs API：建立任務

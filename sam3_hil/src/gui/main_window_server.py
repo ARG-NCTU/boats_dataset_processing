@@ -74,7 +74,10 @@ try:
     from core.video_loader import VideoLoader, ImageFolderLoader
     # 條件式導入 sam3_engine（只有 local 模式需要）
     try:
-        from core.sam3_engine import SAM3Engine, FrameResult, visualize_frame_results, Detection
+        from core.sam3_engine import (
+            SAM3Engine, FrameResult, visualize_frame_results, Detection,
+            binary_mask_to_logit_prior, replay_refinement_sequence,
+        )
         SAM3_AVAILABLE = True
     except ImportError:
         SAM3_AVAILABLE = False
@@ -82,6 +85,8 @@ try:
         from gui.server_workers.server_worker import Detection, FrameResult
         SAM3Engine = None
         visualize_frame_results = None
+        binary_mask_to_logit_prior = None
+        replay_refinement_sequence = None
     from core.confidence_analyzer import (
         ConfidenceAnalyzer, 
         ConfidenceCategory,
@@ -4234,6 +4239,7 @@ class STAMPMainWindow(QMainWindow):
         
         if len(points) == 0:
             # 沒有點，顯示原始 mask
+            state.current_logits = None
             self.video_canvas.update_refined_mask(state.original_mask)
             return
         
@@ -4251,18 +4257,52 @@ class STAMPMainWindow(QMainWindow):
                 self._run_mock_refinement(points, labels, state.original_mask)
                 return
         
-        # 執行 refinement（不傳 mask_input，讓 SAM3 純粹根據 point prompts 預測）
-        # 注意：SAM3 的 mask_input 需要是 logits 格式，而我們只有 binary mask
+        # 執行 refinement：重播所有點並把前一次 logits 傳回 SAM3。
+        # Original Mask Prior 會先把 binary mask 轉成低解析度 logits-like hint。
+        if replay_refinement_sequence is None:
+            logger.warning("Iterative refinement helper unavailable; using mock refinement.")
+            self._run_mock_refinement(points, labels, state.original_mask)
+            return
+
         try:
-            new_mask = self.sam3_engine.refine_mask(
+            # Replay points with previous logits; the original binary mask prior is optional.
+            initial_mask_input = None
+            if (
+                not self.add_object_mode
+                and self.refinement_panel.use_original_mask_prior()
+                and binary_mask_to_logit_prior is not None
+            ):
+                initial_mask_input = binary_mask_to_logit_prior(state.original_mask)
+
+            def refine_step(image, points, labels, mask_input=None, multimask_output=True):
+                if hasattr(self.sam3_engine, "refine_mask_with_logits"):
+                    return self.sam3_engine.refine_mask_with_logits(
+                        image=image,
+                        points=points,
+                        labels=labels,
+                        mask_input=mask_input,
+                        multimask_output=multimask_output,
+                    )
+                return self.sam3_engine.refine_mask(
+                    image=image,
+                    points=points,
+                    labels=labels,
+                    mask_input=mask_input,
+                )
+
+            result = replay_refinement_sequence(refine_step,
                 image=frame,
                 points=points,
                 labels=labels,
-                mask_input=None  # 純粹使用 point prompts
+                initial_mask_input=initial_mask_input,
             )
             
             # 更新顯示
-            self.video_canvas.update_refined_mask(new_mask)
+            state.current_logits = result.logits
+            self.video_canvas.update_refined_mask(result.mask)
+
+            if len(points) > 1 and result.logits is None:
+                self.statusBar().showMessage("Refinement logits unavailable; using point-only refinement.")
             
         except Exception as e:
             logger.error(f"Refinement error: {e}")
