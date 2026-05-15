@@ -18,7 +18,7 @@ from dataclasses import dataclass, field
 import numpy as np
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, 
-    QLabel, QFrame, QSizePolicy
+    QLabel, QFrame, QSizePolicy, QCheckBox
 )
 from PyQt6.QtCore import Qt, pyqtSignal, QPoint, QSize
 from PyQt6.QtGui import (
@@ -53,15 +53,18 @@ class RefinementState:
     frame_idx: int
     original_mask: Optional[np.ndarray] = None
     current_mask: Optional[np.ndarray] = None
+    current_logits: Optional[np.ndarray] = None
     points: List[RefinementPoint] = field(default_factory=list)
     
     def clear_points(self):
         self.points = []
         self.current_mask = self.original_mask.copy() if self.original_mask is not None else None
+        self.current_logits = None
     
     def undo_last_point(self):
         if self.points:
             self.points.pop()
+        self.current_logits = None
     
     def add_point(self, x: int, y: int, is_positive: bool):
         self.points.append(RefinementPoint(x, y, is_positive))
@@ -572,6 +575,12 @@ class RefinementControlPanel(QFrame):
         self.point_counter.setStyleSheet("color: white;")
         self.point_counter.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(self.point_counter)
+
+        self.use_original_prior_checkbox = QCheckBox("Use Original Mask as Prior")
+        self.use_original_prior_checkbox.setToolTip("Use the existing object mask as the first SAM3 mask_input hint")
+        self.use_original_prior_checkbox.setChecked(False)
+        self.use_original_prior_checkbox.setStyleSheet("color: white; font-size: 11px;")
+        layout.addWidget(self.use_original_prior_checkbox)
         
         layout.addSpacing(10)
         
@@ -648,6 +657,8 @@ class RefinementControlPanel(QFrame):
         self.set_object_info(obj_id, score)
         self.set_point_count(0)
         self.apply_btn.setText("✓ Apply")
+        self.use_original_prior_checkbox.setChecked(False)
+        self.use_original_prior_checkbox.setVisible(True)
         self.show()
     
     def enter_add_object(self):
@@ -657,6 +668,8 @@ class RefinementControlPanel(QFrame):
         self.title_label.setStyleSheet("color: #2196F3; font-size: 14px; font-weight: bold;")
         self.object_label.setText("Click to define new object")
         self.set_point_count(0)
+        self.use_original_prior_checkbox.setChecked(False)
+        self.use_original_prior_checkbox.setVisible(False)
         self.apply_btn.setText("✓ Add Object")
         self.setStyleSheet("""
             RefinementControlPanel {
@@ -697,6 +710,10 @@ class RefinementControlPanel(QFrame):
     def exit_refinement(self):
         """Hide the panel."""
         self.hide()
+
+    def use_original_mask_prior(self) -> bool:
+        """Return whether existing-object refinement should start from original mask prior."""
+        return self.mode == "refinement" and self.use_original_prior_checkbox.isChecked()
 
     def set_propagate_visible(self, visible: bool):
         """Show or hide the propagate button (for Images mode)."""
