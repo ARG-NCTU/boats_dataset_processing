@@ -89,6 +89,7 @@ logger = logging.getLogger(__name__)
 
 # Labelme version for compatibility
 LABELME_VERSION = "5.4.1"
+POLYGON_SIMPLIFY_EPSILON_RATIO = 0.0005
 
 
 # =============================================================================
@@ -170,17 +171,16 @@ def mask_to_polygon(mask: np.ndarray, simplify: bool = True) -> List[List[List[f
         List of polygons, each polygon is [[x1,y1], [x2,y2], ...]
     """
     mask_uint8 = (mask > 0.5).astype(np.uint8) * 255
-    contour_approximation = cv2.CHAIN_APPROX_SIMPLE if simplify else cv2.CHAIN_APPROX_NONE
     contours, _ = cv2.findContours(
         mask_uint8, 
         cv2.RETR_EXTERNAL, 
-        contour_approximation
+        cv2.CHAIN_APPROX_SIMPLE
     )
     
     polygons = []
     for contour in contours:
         if simplify:
-            epsilon = 0.002 * cv2.arcLength(contour, True)
+            epsilon = POLYGON_SIMPLIFY_EPSILON_RATIO * cv2.arcLength(contour, True)
             contour = cv2.approxPolyDP(contour, epsilon, True)
         
         if len(contour) < 3:
@@ -465,7 +465,7 @@ class LabelmeExporter:
                     continue
                 
                 # Get polygons from mask
-                polygons = mask_to_polygon(det.mask, simplify=False)
+                polygons = mask_to_polygon(det.mask)
                 
                 # Get label name from object_labels
                 if object_labels and det.obj_id in object_labels:
@@ -570,7 +570,7 @@ class COCOExporter:
                     continue
                 
                 # Get polygons and convert to COCO format
-                polygons = mask_to_polygon(det.mask, simplify=False)
+                polygons = mask_to_polygon(det.mask)
                 segmentation = polygon_to_coco_format(polygons)
                 
                 # Get category_id from mapping, default to 0
