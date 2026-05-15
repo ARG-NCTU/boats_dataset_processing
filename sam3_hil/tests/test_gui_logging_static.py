@@ -76,3 +76,10 @@ def test_server_gui_ignore_object_is_filtered_from_views():
     assert "if det.obj_id in self.ignored_obj_ids:" in visualize_body
     assert "if obj_summary.obj_id in self.ignored_obj_ids:" in video_list_body
     assert "if det.obj_id in self.ignored_obj_ids:" in image_list_body
+
+
+def test_export_uses_unsimplified_polygons():
+    source = Path("src/core/exporter.py").read_text(encoding="utf-8")
+
+    assert "cv2.CHAIN_APPROX_NONE" in source
+    assert "mask_to_polygon(det.mask, simplify=False)" in source
