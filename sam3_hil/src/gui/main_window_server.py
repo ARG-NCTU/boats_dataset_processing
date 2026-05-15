@@ -1229,16 +1229,8 @@ class STAMPMainWindow(QMainWindow):
         self.video_canvas.setMinimumSize(800, 450)
         self.video_canvas.setText("Please open a video file\n\nFile → Open Video (Ctrl+O)")
         self.video_canvas.point_added.connect(self.on_refinement_point_added)
+        self.video_canvas.zoom_changed.connect(self.on_canvas_zoom_changed)
         left_layout.addWidget(self.video_canvas, stretch=1)
-        
-        # Refinement 控制面板 (浮動在 canvas 上方)
-        self.refinement_panel = RefinementControlPanel(self.video_canvas)
-        self.refinement_panel.clear_clicked.connect(self.on_refinement_clear)
-        self.refinement_panel.undo_clicked.connect(self.on_refinement_undo)
-        self.refinement_panel.apply_clicked.connect(self.on_refinement_apply)
-        self.refinement_panel.propagate_clicked.connect(self.on_refinement_propagate)
-        self.refinement_panel.cancel_clicked.connect(self.on_refinement_cancel)
-        self.refinement_panel.move(10, 10)  # 左上角
         
         # 為了向後相容，保留 video_label 別名
         self.video_label = self.video_canvas
@@ -1292,6 +1284,29 @@ class STAMPMainWindow(QMainWindow):
         control_layout.addWidget(self.next_btn)
         
         control_layout.addStretch()
+
+        self.zoom_out_btn = QPushButton("-")
+        self.zoom_out_btn.setFixedWidth(32)
+        self.zoom_out_btn.setToolTip("Zoom out (Ctrl + mouse wheel also works)")
+        self.zoom_out_btn.clicked.connect(self.video_canvas.zoom_out)
+        control_layout.addWidget(self.zoom_out_btn)
+
+        self.zoom_label = QLabel("100%")
+        self.zoom_label.setFixedWidth(48)
+        self.zoom_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        control_layout.addWidget(self.zoom_label)
+
+        self.zoom_in_btn = QPushButton("+")
+        self.zoom_in_btn.setFixedWidth(32)
+        self.zoom_in_btn.setToolTip("Zoom in (Ctrl + mouse wheel also works)")
+        self.zoom_in_btn.clicked.connect(self.video_canvas.zoom_in)
+        control_layout.addWidget(self.zoom_in_btn)
+
+        self.zoom_fit_btn = QPushButton("Fit")
+        self.zoom_fit_btn.setFixedWidth(44)
+        self.zoom_fit_btn.setToolTip("Fit image to the annotation view")
+        self.zoom_fit_btn.clicked.connect(self.video_canvas.fit_to_view)
+        control_layout.addWidget(self.zoom_fit_btn)
         
         # Display options
         self.mask_checkbox = QCheckBox("Show Mask")
@@ -1498,7 +1513,8 @@ class STAMPMainWindow(QMainWindow):
         
         # 物件列表 (啟用右鍵選單)
         self.object_list = QListWidget()
-        self.object_list.setMinimumHeight(300)
+        self.object_list.setMinimumHeight(120)
+        self.object_list.setMaximumHeight(220)
         self.object_list.itemSelectionChanged.connect(self.on_object_selection_changed)
         self.object_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.object_list.customContextMenuRequested.connect(self.show_object_context_menu)
@@ -1508,6 +1524,15 @@ class STAMPMainWindow(QMainWindow):
         manage_hint = QLabel("Right-click on object for more options")
         manage_hint.setStyleSheet("color: #888; font-size: 10px;")
         objects_layout.addWidget(manage_hint)
+
+        # Keep refinement controls outside the annotation canvas.
+        self.refinement_panel = RefinementControlPanel()
+        self.refinement_panel.clear_clicked.connect(self.on_refinement_clear)
+        self.refinement_panel.undo_clicked.connect(self.on_refinement_undo)
+        self.refinement_panel.apply_clicked.connect(self.on_refinement_apply)
+        self.refinement_panel.propagate_clicked.connect(self.on_refinement_propagate)
+        self.refinement_panel.cancel_clicked.connect(self.on_refinement_cancel)
+        objects_layout.addWidget(self.refinement_panel)
         
         right_layout.addWidget(objects_group)
         
@@ -1517,6 +1542,11 @@ class STAMPMainWindow(QMainWindow):
         
         # 設定初始大小比例
         splitter.setSizes([1000, 350])
+
+    def on_canvas_zoom_changed(self, zoom_factor: float):
+        """Update the zoom indicator."""
+        if hasattr(self, "zoom_label"):
+            self.zoom_label.setText(f"{int(zoom_factor * 100)}%")
     
     def setup_menu(self):
         """建立選單。"""
@@ -2189,6 +2219,10 @@ class STAMPMainWindow(QMainWindow):
     
     def cv2_to_qpixmap(self, cv_image: np.ndarray) -> QPixmap:
         """OpenCV 影像轉 QPixmap。"""
+        return QPixmap.fromImage(self.cv2_to_qimage(cv_image))
+
+    def cv2_to_qimage(self, cv_image: np.ndarray) -> QImage:
+        """OpenCV 影像轉 QImage。"""
         if len(cv_image.shape) == 2:
             rgb_image = cv2.cvtColor(cv_image, cv2.COLOR_GRAY2RGB)
         else:
@@ -2204,8 +2238,8 @@ class STAMPMainWindow(QMainWindow):
             bytes_per_line,
             QImage.Format.Format_RGB888
         )
-        
-        return QPixmap.fromImage(q_image)
+
+        return q_image.copy()
     
     def display_frame(self, frame_idx: int):
         """顯示指定幀。"""
@@ -2217,14 +2251,10 @@ class STAMPMainWindow(QMainWindow):
         
         # 如果在 refinement 模式，使用 InteractiveCanvas 的方式顯示
         if self.refinement_active and frame_idx == self.current_frame:
-            # 轉換 frame 為 QImage
-            rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            h, w, ch = rgb_frame.shape
-            bytes_per_line = ch * w
-            q_image = QImage(rgb_frame.data, w, h, bytes_per_line, QImage.Format.Format_RGB888)
-            
-            # 設置 base image
-            self.video_canvas.set_base_image(q_image)
+            current_mask = None
+            if self.video_canvas.refinement_state is not None:
+                current_mask = self.video_canvas.refinement_state.current_mask
+            self.video_canvas.set_display_image(self.cv2_to_qimage(frame), current_mask)
             
             # 更新 UI
             self.current_frame = frame_idx
@@ -2243,14 +2273,8 @@ class STAMPMainWindow(QMainWindow):
         if self.show_horizon and self.horizon_result and self.horizon_result.valid:
             frame = self._draw_horizon_overlay(frame)
         
-        # 轉換並顯示
-        pixmap = self.cv2_to_qpixmap(frame)
-        scaled_pixmap = pixmap.scaled(
-            self.video_label.size(),
-            Qt.AspectRatioMode.KeepAspectRatio,
-            Qt.TransformationMode.SmoothTransformation
-        )
-        self.video_label.setPixmap(scaled_pixmap)
+        # 轉換並顯示。InteractiveCanvas 負責 fit/zoom/pan。
+        self.video_canvas.set_display_image(self.cv2_to_qimage(frame), None)
         
         # 更新 UI
         self.current_frame = frame_idx
