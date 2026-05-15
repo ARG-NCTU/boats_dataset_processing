@@ -23,8 +23,10 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, pyqtSignal, QPoint, QSize
 from PyQt6.QtGui import (
     QImage, QPixmap, QPainter, QColor, QPen, QBrush,
-    QMouseEvent, QPaintEvent, QResizeEvent
+    QMouseEvent, QPaintEvent, QResizeEvent, QWheelEvent
 )
+
+from gui.canvas_viewport import CanvasViewportTransform
 
 logger = logging.getLogger(__name__)
 
@@ -97,6 +99,7 @@ class InteractiveCanvas(QLabel):
     point_added = pyqtSignal(int, int, bool)  # x, y, is_positive
     refinement_applied = pyqtSignal()
     refinement_cancelled = pyqtSignal()
+    zoom_changed = pyqtSignal(float)
     
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -110,6 +113,13 @@ class InteractiveCanvas(QLabel):
         self.mask_overlay: Optional[np.ndarray] = None
         self.display_scale = 1.0
         self.image_offset = QPoint(0, 0)
+        self.zoom_factor = 1.0
+        self.min_zoom = 1.0
+        self.max_zoom = 8.0
+        self.zoom_step = 1.25
+        self.pan_offset = QPoint(0, 0)
+        self._is_panning = False
+        self._last_pan_pos = QPoint(0, 0)
         
         # Settings
         self.positive_color = QColor(0, 255, 0, 180)  # Green
@@ -135,6 +145,66 @@ class InteractiveCanvas(QLabel):
         """Set the mask overlay (H, W boolean array)."""
         self.mask_overlay = mask
         self._update_display()
+
+    def set_display_image(self, image: QImage, mask: Optional[np.ndarray] = None):
+        """Set the displayed image and optional mask overlay in one repaint."""
+        self.base_image = image
+        self.mask_overlay = mask
+        self._update_display()
+
+    def fit_to_view(self):
+        """Reset zoom and pan to show the full image."""
+        self.zoom_factor = 1.0
+        self.pan_offset = QPoint(0, 0)
+        self._update_display()
+        self.zoom_changed.emit(self.zoom_factor)
+
+    def zoom_in(self):
+        """Zoom in around the canvas center."""
+        self._set_zoom(self.zoom_factor * self.zoom_step)
+
+    def zoom_out(self):
+        """Zoom out around the canvas center."""
+        self._set_zoom(self.zoom_factor / self.zoom_step)
+
+    def _set_zoom(self, zoom_factor: float, anchor: Optional[QPoint] = None):
+        """Set zoom while keeping the anchor point visually stable."""
+        if self.base_image is None:
+            return
+
+        old_zoom = self.zoom_factor
+        new_zoom = max(self.min_zoom, min(self.max_zoom, zoom_factor))
+        if abs(new_zoom - old_zoom) < 0.001:
+            return
+
+        if anchor is None:
+            anchor = QPoint(self.width() // 2, self.height() // 2)
+
+        image_x, image_y = self._screen_to_image_coords(anchor)
+        self.zoom_factor = new_zoom
+        self._update_display()
+
+        new_screen = self._image_to_screen_coords(image_x, image_y)
+        self.pan_offset += anchor - new_screen
+        if self.zoom_factor <= self.min_zoom:
+            self.pan_offset = QPoint(0, 0)
+
+        self._update_display()
+        self.zoom_changed.emit(self.zoom_factor)
+
+    def _build_viewport(self) -> Optional[CanvasViewportTransform]:
+        if self.base_image is None:
+            return None
+
+        return CanvasViewportTransform(
+            widget_width=max(1, self.width()),
+            widget_height=max(1, self.height()),
+            image_width=max(1, self.base_image.width()),
+            image_height=max(1, self.base_image.height()),
+            zoom_factor=self.zoom_factor,
+            pan_x=self.pan_offset.x(),
+            pan_y=self.pan_offset.y(),
+        )
     
     def enter_refinement_mode(self, obj_id: int, frame_idx: int, mask: np.ndarray):
         """
@@ -152,6 +222,7 @@ class InteractiveCanvas(QLabel):
             original_mask=mask.copy(),
             current_mask=mask.copy()
         )
+        self.mask_overlay = mask
         self.setCursor(Qt.CursorShape.CrossCursor)
         self._update_display()
         logger.info(f"Entered refinement mode for object {obj_id}")
@@ -210,25 +281,30 @@ class InteractiveCanvas(QLabel):
         """Convert screen coordinates to image coordinates."""
         if self.base_image is None:
             return (0, 0)
-        
-        # Get the position relative to the image
-        x = int((screen_pos.x() - self.image_offset.x()) / self.display_scale)
-        y = int((screen_pos.y() - self.image_offset.y()) / self.display_scale)
-        
-        # Clamp to image bounds
-        x = max(0, min(x, self.base_image.width() - 1))
-        y = max(0, min(y, self.base_image.height() - 1))
-        
-        return (x, y)
+
+        viewport = self._build_viewport()
+        if viewport is None:
+            return (0, 0)
+
+        return viewport.screen_to_image(screen_pos.x(), screen_pos.y())
     
     def _image_to_screen_coords(self, img_x: int, img_y: int) -> QPoint:
         """Convert image coordinates to screen coordinates."""
-        screen_x = int(img_x * self.display_scale) + self.image_offset.x()
-        screen_y = int(img_y * self.display_scale) + self.image_offset.y()
+        viewport = self._build_viewport()
+        if viewport is None:
+            return QPoint(0, 0)
+
+        screen_x, screen_y = viewport.image_to_screen(img_x, img_y)
         return QPoint(screen_x, screen_y)
     
     def mousePressEvent(self, event: QMouseEvent):
         """Handle mouse press events."""
+        if event.button() == Qt.MouseButton.MiddleButton and self.base_image is not None:
+            self._is_panning = True
+            self._last_pan_pos = event.pos()
+            self.setCursor(Qt.CursorShape.ClosedHandCursor)
+            return
+
         if not self.refinement_mode or self.base_image is None:
             super().mousePressEvent(event)
             return
@@ -255,6 +331,38 @@ class InteractiveCanvas(QLabel):
         self._update_display()
         
         logger.debug(f"Point added: ({img_x}, {img_y}), positive={is_positive}")
+
+    def mouseMoveEvent(self, event: QMouseEvent):
+        """Handle middle-button panning."""
+        if self._is_panning:
+            delta = event.pos() - self._last_pan_pos
+            self.pan_offset += delta
+            self._last_pan_pos = event.pos()
+            self._update_display()
+            return
+
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event: QMouseEvent):
+        """Stop panning when the middle mouse button is released."""
+        if event.button() == Qt.MouseButton.MiddleButton and self._is_panning:
+            self._is_panning = False
+            self.setCursor(Qt.CursorShape.CrossCursor if self.refinement_mode else Qt.CursorShape.ArrowCursor)
+            return
+
+        super().mouseReleaseEvent(event)
+
+    def wheelEvent(self, event: QWheelEvent):
+        """Use Ctrl + mouse wheel for zooming without interfering with normal scroll."""
+        if event.modifiers() & Qt.KeyboardModifier.ControlModifier:
+            if event.angleDelta().y() > 0:
+                self._set_zoom(self.zoom_factor * self.zoom_step, event.position().toPoint())
+            else:
+                self._set_zoom(self.zoom_factor / self.zoom_step, event.position().toPoint())
+            event.accept()
+            return
+
+        super().wheelEvent(event)
     
     def _update_display(self):
         """Update the displayed image with overlays."""
@@ -262,21 +370,15 @@ class InteractiveCanvas(QLabel):
             self.setText("No image")
             return
         
-        # Calculate scale and offset
         widget_size = self.size()
-        img_size = self.base_image.size()
-        
-        scale_x = widget_size.width() / img_size.width()
-        scale_y = widget_size.height() / img_size.height()
-        self.display_scale = min(scale_x, scale_y)
-        
-        scaled_width = int(img_size.width() * self.display_scale)
-        scaled_height = int(img_size.height() * self.display_scale)
-        
-        self.image_offset = QPoint(
-            (widget_size.width() - scaled_width) // 2,
-            (widget_size.height() - scaled_height) // 2
-        )
+        viewport = self._build_viewport()
+        if viewport is None:
+            return
+
+        self.display_scale = viewport.display_scale
+        scaled_width, scaled_height = viewport.scaled_size
+        offset_x, offset_y = viewport.image_offset
+        self.image_offset = QPoint(offset_x, offset_y)
         
         # Create display image
         display = QPixmap(widget_size)
