@@ -22,6 +22,7 @@ import logging
 import time
 import tempfile
 import threading
+import shutil
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Set
 
@@ -3699,6 +3700,104 @@ class STAMPMainWindow(QMainWindow):
             return "segformer"
         return "auto"
     
+    def _next_available_dataset_name(self, output_dir: Path, dataset_name: str) -> str:
+        """Return a non-existing dataset folder name using an incrementing suffix."""
+        base_name = dataset_name.strip() or "dataset"
+        index = 1
+        while True:
+            candidate = f"{base_name}_{index}"
+            if not (output_dir / candidate).exists():
+                return candidate
+            index += 1
+
+    def _clear_existing_export_dir(self, target_dir: Path, output_dir: Path) -> bool:
+        """Delete an existing export dataset folder after validating the target path."""
+        resolved_target = target_dir.resolve()
+        resolved_output = output_dir.resolve()
+
+        if resolved_target.parent != resolved_output or resolved_target == resolved_output:
+            QMessageBox.warning(
+                self,
+                "Invalid Export Path",
+                "Refusing to clear an export folder outside the selected output directory."
+            )
+            return False
+
+        shutil.rmtree(resolved_target)
+        return True
+
+    def _prepare_export_target_dir(self, output_dir: Path, dataset_name: str) -> Optional[Path]:
+        """Handle an existing export folder before writing files."""
+        output_dir = Path(output_dir)
+        dataset_name = dataset_name.strip() or "dataset"
+        target_dir = output_dir / dataset_name
+
+        if not target_dir.exists():
+            return target_dir
+
+        message = QMessageBox(self)
+        message.setIcon(QMessageBox.Icon.Warning)
+        message.setWindowTitle("Export Folder Exists")
+        message.setText(f"The export folder already exists:\n{target_dir}")
+        message.setInformativeText(
+            "Choose whether to clear it before export, use a different dataset name, or cancel."
+        )
+        overwrite_btn = message.addButton("Overwrite and Clear", QMessageBox.ButtonRole.DestructiveRole)
+        rename_btn = message.addButton("Change Name", QMessageBox.ButtonRole.ActionRole)
+        cancel_btn = message.addButton("Cancel", QMessageBox.ButtonRole.RejectRole)
+        message.setDefaultButton(cancel_btn)
+        message.exec()
+
+        clicked_btn = message.clickedButton()
+        if clicked_btn == cancel_btn:
+            return None
+
+        if clicked_btn == overwrite_btn:
+            if not self._clear_existing_export_dir(target_dir, output_dir):
+                return None
+            return target_dir
+
+        if clicked_btn == rename_btn:
+            suggested_name = self._next_available_dataset_name(output_dir, dataset_name)
+            while True:
+                new_name, ok = QInputDialog.getText(
+                    self,
+                    "Change Dataset Name",
+                    "Dataset name:",
+                    text=suggested_name,
+                )
+                if not ok:
+                    return None
+
+                new_name = new_name.strip()
+                if not new_name:
+                    QMessageBox.warning(self, "Invalid Name", "Dataset name cannot be empty.")
+                    suggested_name = self._next_available_dataset_name(output_dir, dataset_name)
+                    continue
+
+                new_target_dir = output_dir / new_name
+                if new_target_dir.resolve().parent != output_dir.resolve():
+                    QMessageBox.warning(
+                        self,
+                        "Invalid Name",
+                        "Dataset name cannot include a path or point outside the output directory."
+                    )
+                    suggested_name = self._next_available_dataset_name(output_dir, dataset_name)
+                    continue
+
+                if new_target_dir.exists():
+                    QMessageBox.warning(
+                        self,
+                        "Export Folder Exists",
+                        f"The export folder still exists:\n{new_target_dir}\n\nPlease choose another name."
+                    )
+                    suggested_name = self._next_available_dataset_name(output_dir, new_name)
+                    continue
+
+                return new_target_dir
+
+        return None
+
     def export_results(self):
         """匯出標註結果。"""
         if not self.sam3_results:
@@ -3770,6 +3869,12 @@ class STAMPMainWindow(QMainWindow):
         include_rejected = dialog.get_include_rejected()
         include_stamp_fields = dialog.get_include_stamp_fields()
         train_ratio, val_ratio, test_ratio = dialog.get_split_ratios()
+
+        prepared_target_dir = self._prepare_export_target_dir(Path(output_dir), dataset_name)
+        if prepared_target_dir is None:
+            return
+        output_dir = str(prepared_target_dir.parent)
+        dataset_name = prepared_target_dir.name
         
         # 計算 frame step
         if frame_interval > 0:
