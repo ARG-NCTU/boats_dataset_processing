@@ -1537,6 +1537,7 @@ class STAMPMainWindow(QMainWindow):
         self.refinement_panel.apply_clicked.connect(self.on_refinement_apply)
         self.refinement_panel.propagate_clicked.connect(self.on_refinement_propagate)
         self.refinement_panel.cancel_clicked.connect(self.on_refinement_cancel)
+        self.refinement_panel.use_original_prior_checkbox.stateChanged.connect(self.on_refinement_prior_changed)
         objects_layout.addWidget(self.refinement_panel)
         
         right_layout.addWidget(objects_group)
@@ -4143,6 +4144,7 @@ class STAMPMainWindow(QMainWindow):
         # 檢查是否為 Independent Images 模式
         is_independent_mode = (self.processing_mode_combo.currentIndex() == 1)
         self.refinement_panel.set_propagate_visible(not is_independent_mode)
+        self._update_refinement_empty_preview()
         
         # 禁用其他控制
         self._set_controls_enabled(False)
@@ -4238,8 +4240,7 @@ class STAMPMainWindow(QMainWindow):
         
         if len(points) == 0:
             # 沒有點，顯示原始 mask
-            state.current_logits = None
-            self.video_canvas.update_refined_mask(state.original_mask)
+            self._update_refinement_empty_preview()
             return
         
         # 初始化 SAM3 engine（如果還沒有）
@@ -4325,11 +4326,40 @@ class STAMPMainWindow(QMainWindow):
                 result_mask[circle] = 0
         
         self.video_canvas.update_refined_mask(result_mask > 0.5)
+
+    def on_refinement_prior_changed(self, _state=None):
+        """Update preview/refinement when the original-mask prior is toggled."""
+        if not self.refinement_active or self.add_object_mode or not self.video_canvas.refinement_state:
+            return
+
+        state = self.video_canvas.refinement_state
+        state.current_logits = None
+        if len(state.points) == 0:
+            self._update_refinement_empty_preview()
+            self.display_frame(self.current_frame)
+        else:
+            self._run_refinement()
+
+    def _update_refinement_empty_preview(self):
+        """Show original mask only when the prior checkbox is enabled."""
+        if not self.video_canvas.refinement_state:
+            return
+
+        state = self.video_canvas.refinement_state
+        if not self.add_object_mode and self.refinement_panel.use_original_mask_prior():
+            preview_mask = state.original_mask.copy()
+        else:
+            preview_mask = None
+
+        state.current_mask = preview_mask
+        state.current_logits = None
+        self.video_canvas.set_mask_overlay(preview_mask)
     
     def on_refinement_clear(self):
         """清除所有 refinement 點。"""
         self.video_canvas.clear_points()
         self.refinement_panel.set_point_count(0)
+        self._update_refinement_empty_preview()
         self.display_frame(self.current_frame)  # 重新顯示原始 mask
     
     def on_refinement_undo(self):
