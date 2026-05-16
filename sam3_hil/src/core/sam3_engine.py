@@ -34,7 +34,7 @@ import uuid
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional, Any, Union
+from typing import Dict, List, Optional, Any, Union, Tuple
 
 import cv2
 import numpy as np
@@ -113,7 +113,7 @@ REFINEMENT_PRIOR_LOGIT_SCALE = 2.0
 
 def binary_mask_to_logit_prior(
     mask: np.ndarray,
-    output_size: int = REFINEMENT_LOGITS_SIZE,
+    output_size: Union[int, Tuple[int, int]] = REFINEMENT_LOGITS_SIZE,
     logit_scale: float = REFINEMENT_PRIOR_LOGIT_SCALE,
 ) -> np.ndarray:
     """Convert a binary mask into a conservative low-res logits prior."""
@@ -123,13 +123,33 @@ def binary_mask_to_logit_prior(
     if mask_float.size and np.max(mask_float) > 1.0:
         mask_float = mask_float / 255.0
 
+    if isinstance(output_size, tuple):
+        resize_size = (int(output_size[1]), int(output_size[0]))
+    else:
+        resize_size = (int(output_size), int(output_size))
+
     low_res = cv2.resize(
         mask_float,
-        (output_size, output_size),
+        resize_size,
         interpolation=cv2.INTER_LINEAR,
     )
     low_res = np.clip(low_res, 0.0, 1.0)
     return ((low_res * 2.0 - 1.0) * float(logit_scale)).astype(np.float32)
+
+
+def prepare_refinement_mask_input(
+    mask_input: np.ndarray,
+    binary_prior_size: Union[int, Tuple[int, int]] = REFINEMENT_LOGITS_SIZE,
+) -> np.ndarray:
+    """Prepare mask_input without resizing float logits returned by SAM3."""
+    mask_input_array = np.asarray(mask_input)
+    if mask_input_array.ndim == 3:
+        mask_input_array = mask_input_array[0]
+
+    if mask_input_array.dtype == np.bool_:
+        return binary_mask_to_logit_prior(mask_input_array, output_size=binary_prior_size)
+
+    return mask_input_array.astype(np.float32)
 
 
 def replay_refinement_sequence(
@@ -334,6 +354,16 @@ class SAM3GPUEngine(BaseSAM3Engine):
             self._image_model = build_sam3_image_model(enable_inst_interactivity=True)
             self._image_processor = Sam3Processor(self._image_model)
             logger.info("SAM3 image model loaded!")
+
+    def _get_refinement_mask_input_size(self) -> Union[int, Tuple[int, int]]:
+        """Return SAM3's native mask-input size for binary prior conversion."""
+        predictor = getattr(self._image_model, "inst_interactive_predictor", None)
+        model = getattr(predictor, "model", None)
+        prompt_encoder = getattr(model, "sam_prompt_encoder", None)
+        mask_input_size = getattr(prompt_encoder, "mask_input_size", None)
+        if mask_input_size is None:
+            return REFINEMENT_LOGITS_SIZE
+        return tuple(int(v) for v in mask_input_size)
     
     def _load_video_predictor(self) -> None:
         """Lazy load video predictor."""
@@ -469,13 +499,10 @@ class SAM3GPUEngine(BaseSAM3Engine):
         inference_state = self._image_processor.set_image(pil_image)
 
         if mask_input is not None:
-            mask_input_array = np.asarray(mask_input)
-            if mask_input_array.ndim == 3:
-                mask_input_array = mask_input_array[0]
-            if mask_input_array.shape != (REFINEMENT_LOGITS_SIZE, REFINEMENT_LOGITS_SIZE) or mask_input_array.dtype == np.bool_:
-                mask_input = binary_mask_to_logit_prior(mask_input_array)
-            else:
-                mask_input = mask_input_array.astype(np.float32)
+            mask_input = prepare_refinement_mask_input(
+                mask_input,
+                binary_prior_size=self._get_refinement_mask_input_size(),
+            )
         
         # Check if we have points
         if len(points) == 0:

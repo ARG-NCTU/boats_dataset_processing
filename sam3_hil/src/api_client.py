@@ -529,7 +529,11 @@ class StampAPIClient:
         }
         
         if mask_input is not None:
-            request_data["mask_input_logits"] = encode_array_to_base64(mask_input)
+            mask_input_array = np.asarray(mask_input)
+            if mask_input_array.dtype == np.bool_ or mask_input_array.shape == image.shape[:2]:
+                request_data["current_mask"] = encode_mask_to_base64(mask_input_array > 0)
+            else:
+                request_data["mask_input_logits"] = encode_array_to_base64(mask_input_array)
         
         try:
             response = requests.post(

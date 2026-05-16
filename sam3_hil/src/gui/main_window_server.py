@@ -76,7 +76,7 @@ try:
     try:
         from core.sam3_engine import (
             SAM3Engine, FrameResult, visualize_frame_results, Detection,
-            binary_mask_to_logit_prior, replay_refinement_sequence,
+            replay_refinement_sequence,
         )
         SAM3_AVAILABLE = True
     except ImportError:
@@ -85,7 +85,6 @@ try:
         from gui.server_workers.server_worker import Detection, FrameResult
         SAM3Engine = None
         visualize_frame_results = None
-        binary_mask_to_logit_prior = None
         replay_refinement_sequence = None
     from core.confidence_analyzer import (
         ConfidenceAnalyzer, 
@@ -4270,9 +4269,8 @@ class STAMPMainWindow(QMainWindow):
             if (
                 not self.add_object_mode
                 and self.refinement_panel.use_original_mask_prior()
-                and binary_mask_to_logit_prior is not None
             ):
-                initial_mask_input = binary_mask_to_logit_prior(state.original_mask)
+                initial_mask_input = state.original_mask.astype(bool)
 
             def refine_step(image, points, labels, mask_input=None, multimask_output=True):
                 if hasattr(self.sam3_engine, "refine_mask_with_logits"):
