@@ -173,11 +173,6 @@ async def refine(request: RefineRequest):
             current_mask = decode_base64_to_array(request.mask_input_logits).astype(np.float32)
         elif request.current_mask:
             current_mask = decode_base64_to_mask(request.current_mask)
-            try:
-                from core.sam3_engine import binary_mask_to_logit_prior
-                current_mask = binary_mask_to_logit_prior(current_mask)
-            except Exception as e:
-                logger.warning(f"Could not convert current_mask to logits prior: {e}")
         
         # Convert RGB to BGR if needed (SAM3 expects BGR)
         if len(img_array.shape) == 3 and img_array.shape[2] == 3:
