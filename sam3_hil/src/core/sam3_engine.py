@@ -152,6 +152,40 @@ def prepare_refinement_mask_input(
     return mask_input_array.astype(np.float32)
 
 
+def preserve_original_mask_if_dropped(
+    refined_mask: np.ndarray,
+    original_mask: np.ndarray,
+    min_retained_ratio: float = 0.25,
+) -> np.ndarray:
+    """Union the original mask back when refinement nearly drops the prior object."""
+    refined_bool = np.asarray(refined_mask).astype(bool)
+    original_bool = np.asarray(original_mask).astype(bool)
+
+    if refined_bool.shape != original_bool.shape:
+        logger.warning(
+            "Cannot preserve original mask: refined shape %s != original shape %s",
+            refined_bool.shape,
+            original_bool.shape,
+        )
+        return refined_bool
+
+    original_area = int(np.count_nonzero(original_bool))
+    if original_area == 0:
+        return refined_bool
+
+    retained_area = int(np.count_nonzero(refined_bool & original_bool))
+    retained_ratio = retained_area / original_area
+
+    if retained_ratio < min_retained_ratio:
+        logger.info(
+            "Refinement retained %.3f of original mask; preserving original mask area.",
+            retained_ratio,
+        )
+        return refined_bool | original_bool
+
+    return refined_bool
+
+
 def replay_refinement_sequence(
     refine_func,
     image: np.ndarray,
