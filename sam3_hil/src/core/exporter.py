@@ -580,7 +580,7 @@ class COCOExporter:
                     "id": annotation_id,
                     "image_id": image_id,
                     "category_id": category_id,
-                    "bbox": [float(x) for x in det.box.tolist()],
+                    "bbox": compute_bbox_from_mask(det.mask),
                     "area": compute_area(det.mask),
                     "segmentation": segmentation,
                     "iscrowd": 0

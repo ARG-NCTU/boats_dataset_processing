@@ -4419,6 +4419,11 @@ class STAMPMainWindow(QMainWindow):
                 for det in frame_result.detections:
                     if det.obj_id == obj_id:
                         det.mask = new_mask.astype(np.uint8)
+                        ys, xs = np.where(new_mask)
+                        if len(xs) > 0 and len(ys) > 0:
+                            x_min, x_max = xs.min(), xs.max()
+                            y_min, y_max = ys.min(), ys.max()
+                            det.box = np.array([x_min, y_min, x_max - x_min, y_max - y_min])
                         logger.info(f"Applied refined mask for object {obj_id}")
                         break
             
