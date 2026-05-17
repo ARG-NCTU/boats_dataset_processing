@@ -76,7 +76,7 @@ try:
     try:
         from core.sam3_engine import (
             SAM3Engine, FrameResult, visualize_frame_results, Detection,
-            replay_refinement_sequence,
+            replay_refinement_sequence, preserve_original_mask_if_dropped,
         )
         SAM3_AVAILABLE = True
     except ImportError:
@@ -86,6 +86,7 @@ try:
         SAM3Engine = None
         visualize_frame_results = None
         replay_refinement_sequence = None
+        preserve_original_mask_if_dropped = None
     from core.confidence_analyzer import (
         ConfidenceAnalyzer, 
         ConfidenceCategory,
@@ -4298,7 +4299,17 @@ class STAMPMainWindow(QMainWindow):
             
             # 更新顯示
             state.current_logits = result.logits
-            self.video_canvas.update_refined_mask(result.mask)
+            refined_mask = result.mask
+            if (
+                not self.add_object_mode
+                and self.refinement_panel.use_original_mask_prior()
+                and preserve_original_mask_if_dropped is not None
+            ):
+                refined_mask = preserve_original_mask_if_dropped(
+                    refined_mask,
+                    state.original_mask,
+                )
+            self.video_canvas.update_refined_mask(refined_mask)
 
             if len(points) > 1 and result.logits is None:
                 self.statusBar().showMessage("Refinement logits unavailable; using point-only refinement.")
