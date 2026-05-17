@@ -186,6 +186,40 @@ def preserve_original_mask_if_dropped(
     return refined_bool
 
 
+def add_tracking_seed_prompt(
+    tracker_predictor,
+    inference_state,
+    frame_idx: int,
+    obj_id: int,
+    mask: Optional[np.ndarray],
+    points,
+    labels,
+):
+    """Seed video tracking from the refined mask, falling back to points for empty masks."""
+    if mask is not None and np.any(mask):
+        import torch
+
+        mask_array = np.asarray(mask)
+        if mask_array.ndim == 3:
+            mask_array = mask_array[0] if mask_array.shape[0] == 1 else mask_array[:, :, 0]
+        mask_tensor = torch.tensor(mask_array.astype(np.float32), dtype=torch.float32)
+
+        return tracker_predictor.add_new_mask(
+            inference_state=inference_state,
+            frame_idx=frame_idx,
+            obj_id=obj_id,
+            mask=mask_tensor,
+        )
+
+    return tracker_predictor.add_new_points_or_box(
+        inference_state=inference_state,
+        frame_idx=frame_idx,
+        obj_id=obj_id,
+        points=points,
+        labels=labels,
+    )
+
+
 def replay_refinement_sequence(
     refine_func,
     image: np.ndarray,
@@ -653,16 +687,18 @@ class SAM3GPUEngine(BaseSAM3Engine):
             points_tensor = torch.tensor(points_rel, dtype=torch.float32)
             labels_tensor = torch.tensor(labels.astype(np.int32), dtype=torch.int32)
             
-            # Add prompt at start frame
-            _, out_obj_ids, low_res_masks, video_res_masks = self._tracker_predictor.add_new_points_or_box(
+            # Add the displayed refined mask as the tracking seed. Fall back to points only for empty masks.
+            _, out_obj_ids, low_res_masks, video_res_masks = add_tracking_seed_prompt(
+                tracker_predictor=self._tracker_predictor,
                 inference_state=inference_state,
                 frame_idx=start_frame,
                 obj_id=obj_id,
+                mask=mask,
                 points=points_tensor,
                 labels=labels_tensor,
             )
             
-            logger.info(f"Added points for object {obj_id} at frame {start_frame}")
+            logger.info(f"Added tracking seed for object {obj_id} at frame {start_frame}")
             
             # Propagate through video
             results = {}
