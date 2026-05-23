@@ -26,7 +26,10 @@ def _load_json(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def _load_manifest(path: Path) -> dict[int, int]:
+def _load_manifest(path: Optional[Path]) -> dict[int, int]:
+    if path is None:
+        return {}
+
     with path.open(newline="", encoding="utf-8") as f:
         rows = list(csv.DictReader(f))
     mapping: dict[int, int] = {}
@@ -254,11 +257,11 @@ def _write_per_frame(rows: Iterable[dict[str, Any]], output_path: Path) -> None:
 def evaluate_video_coco(
     pred_coco_path: Path,
     gt_coco_path: Path,
-    manifest_path: Path,
+    manifest_path: Optional[Path],
     output_path: Path,
     summary_path: Optional[Path] = None,
 ) -> dict[str, Any]:
-    clip_to_source = _load_manifest(Path(manifest_path))
+    clip_to_source = _load_manifest(Path(manifest_path) if manifest_path else None)
     source_to_clip = {source: clip for clip, source in clip_to_source.items()}
     pred_coco = _load_json(Path(pred_coco_path))
     gt_coco = _load_json(Path(gt_coco_path))
@@ -268,9 +271,12 @@ def evaluate_video_coco(
     gt_instances = _frame_instance_masks(gt_coco)
     use_instance_matching = bool(pred_instances) and bool(gt_instances)
 
-    # Full-video GT may contain frames outside the participant clip. Evaluate
-    # only the source frames listed in the clip manifest.
-    frame_indices = sorted(source_to_clip)
+    # With a manifest, evaluate only listed source frames. Without one, compare
+    # pred/GT directly by their parsed clip-relative frame indices.
+    if source_to_clip:
+        frame_indices = sorted(source_to_clip)
+    else:
+        frame_indices = sorted(set(gt_masks) | set(pred_masks) | set(gt_instances) | set(pred_instances))
     rows: list[dict[str, Any]] = []
     total_gt = 0
     total_pred = 0
@@ -350,7 +356,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--pred-coco", type=Path, required=True)
     parser.add_argument("--gt-coco", type=Path, required=True)
-    parser.add_argument("--manifest", type=Path, required=True)
+    parser.add_argument("--manifest", type=Path, default=None)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--summary", type=Path, default=None)
     return parser.parse_args()
