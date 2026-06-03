@@ -347,7 +347,6 @@ class SAM3Worker(QThread):
 class ImageBatchWorker(QThread):
     """
     背景執行緒處理批次獨立圖片。
-    
     與 SAM3Worker 不同，這個 Worker：
     - 每張圖片獨立使用 detect_image()
     - 不使用 propagate（因為場景不連續）
