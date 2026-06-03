@@ -23,8 +23,9 @@ import time
 import tempfile
 import threading
 import shutil
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple, Set
+from typing import Any, Dict, List, Optional, Tuple, Set
 
 import cv2
 import numpy as np
@@ -102,6 +103,19 @@ except ImportError as e:
     sys.exit(1)
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class OverlayStyle:
+    """Resolution-aware drawing sizes for detection overlays."""
+
+    box_thickness: int
+    label_thickness: int
+    font_scale: float
+    label_padding: int
+    polygon_outer_thickness: int
+    polygon_inner_thickness: int
+
 
 # =============================================================================
 # GPU Memory Cleanup Utility
@@ -469,6 +483,54 @@ class ImageBatchWorker(QThread):
 
 
 # =============================================================================
+# Worker Thread for Export Processing
+# =============================================================================
+
+class ExportWorker(QThread):
+    """Run annotation export outside the Qt main thread."""
+
+    progress = pyqtSignal(int, str)
+    export_finished = pyqtSignal(object)
+    export_error = pyqtSignal(str)
+
+    def __init__(
+        self,
+        config: ExportConfig,
+        results: Dict[int, FrameResult],
+        object_status: Dict[Any, str],
+        video_analysis: Optional[VideoAnalysis],
+        formats: List[str],
+        object_labels: Dict[int, str],
+    ):
+        super().__init__()
+        self.config = config
+        self.results = dict(results)
+        self.object_status = dict(object_status)
+        self.video_analysis = video_analysis
+        self.formats = list(formats)
+        self.object_labels = dict(object_labels)
+
+    def run(self):
+        try:
+            exporter = AnnotationExporter(self.config)
+            stats = exporter.export_all(
+                self.results,
+                self.object_status,
+                self.video_analysis,
+                formats=self.formats,
+                object_labels=self.object_labels,
+                progress_callback=lambda percent, message: self.progress.emit(percent, message),
+            )
+            self.export_finished.emit(stats)
+        except Exception as e:
+            import traceback
+
+            error_msg = f"{type(e).__name__}: {e}\n\n{traceback.format_exc()}"
+            logger.error(f"ExportWorker error: {error_msg}")
+            self.export_error.emit(error_msg)
+
+
+# =============================================================================
 # Object Selection Dialog (for Merge/Swap operations)
 # =============================================================================
 
@@ -681,7 +743,7 @@ class ExportDialog(QDialog):
         """
         super().__init__(parent)
         self.setWindowTitle("Export Annotations")
-        self.setMinimumWidth(600)
+        self.setMinimumWidth(900)
         self.setMinimumHeight(700)
         self.default_name = default_name
         self.video_fps = video_fps
@@ -737,6 +799,12 @@ class ExportDialog(QDialog):
         self.name_input.textChanged.connect(self.update_path_preview)
         
         layout.addWidget(output_group)
+
+        content_layout = QHBoxLayout()
+        left_panel_layout = QVBoxLayout()
+        right_panel_layout = QVBoxLayout()
+        content_layout.addLayout(left_panel_layout, stretch=1)
+        content_layout.addLayout(right_panel_layout, stretch=2)
         
         # =====================================================================
         # Label Settings (Multi-label support)
@@ -753,6 +821,7 @@ class ExportDialog(QDialog):
         
         self.new_label_input = QLineEdit()
         self.new_label_input.setPlaceholderText("Enter new label name...")
+        self.new_label_input.returnPressed.connect(self.add_label)
         add_label_layout.addWidget(self.new_label_input)
         
         add_label_btn = QPushButton("+ Add Label")
@@ -770,7 +839,24 @@ class ExportDialog(QDialog):
         
         label_layout.addWidget(self.labels_display)
         
-        layout.addWidget(label_group)
+        # Quick assign all objects to one label.
+        quick_widget = QWidget()
+        quick_layout = QHBoxLayout()
+        quick_layout.setContentsMargins(0, 5, 0, 0)
+        quick_widget.setLayout(quick_layout)
+
+        quick_layout.addWidget(QLabel("Quick assign all to:"))
+        self.quick_assign_combo = QComboBox()
+        self.quick_assign_combo.addItems(self.labels)
+        quick_layout.addWidget(self.quick_assign_combo)
+
+        quick_assign_btn = QPushButton("Apply to All")
+        quick_assign_btn.clicked.connect(self.quick_assign_all)
+        quick_layout.addWidget(quick_assign_btn)
+        quick_layout.addStretch()
+
+        label_layout.addWidget(quick_widget)
+        left_panel_layout.addWidget(label_group)
         
         # =====================================================================
         # Object → Label Assignment
@@ -783,7 +869,7 @@ class ExportDialog(QDialog):
             # Scroll area for many objects
             scroll = QScrollArea()
             scroll.setWidgetResizable(True)
-            scroll.setMaximumHeight(200)
+            scroll.setMinimumHeight(320)
             
             scroll_content = QWidget()
             scroll_layout = QVBoxLayout()
@@ -831,25 +917,7 @@ class ExportDialog(QDialog):
             scroll.setWidget(scroll_content)
             assign_layout.addWidget(scroll)
             
-            # Quick assign buttons
-            quick_widget = QWidget()
-            quick_layout = QHBoxLayout()
-            quick_layout.setContentsMargins(0, 5, 0, 0)
-            quick_widget.setLayout(quick_layout)
-            
-            quick_layout.addWidget(QLabel("Quick assign all to:"))
-            self.quick_assign_combo = QComboBox()
-            self.quick_assign_combo.addItems(self.labels)
-            quick_layout.addWidget(self.quick_assign_combo)
-            
-            quick_assign_btn = QPushButton("Apply to All")
-            quick_assign_btn.clicked.connect(self.quick_assign_all)
-            quick_layout.addWidget(quick_assign_btn)
-            quick_layout.addStretch()
-            
-            assign_layout.addWidget(quick_widget)
-            
-            layout.addWidget(assign_group)
+            right_panel_layout.addWidget(assign_group)
         
         # =====================================================================
         # Frame Interval
@@ -878,7 +946,9 @@ class ExportDialog(QDialog):
         self.interval_spin.valueChanged.connect(self.update_interval_info)
         self.update_interval_info()
         
-        layout.addWidget(interval_group)
+        left_panel_layout.addWidget(interval_group)
+        left_panel_layout.addStretch()
+        layout.addWidget(content_layout)
         
         # =====================================================================
         # Export Formats
@@ -913,7 +983,7 @@ class ExportDialog(QDialog):
         self.train_spin = QDoubleSpinBox()
         self.train_spin.setRange(0.0, 1.0)
         self.train_spin.setSingleStep(0.05)
-        self.train_spin.setValue(0.8)
+        self.train_spin.setValue(1.0)
         self.train_spin.setDecimals(2)
         split_layout.addWidget(self.train_spin)
         
@@ -921,7 +991,7 @@ class ExportDialog(QDialog):
         self.val_spin = QDoubleSpinBox()
         self.val_spin.setRange(0.0, 1.0)
         self.val_spin.setSingleStep(0.05)
-        self.val_spin.setValue(0.1)
+        self.val_spin.setValue(0.0)
         self.val_spin.setDecimals(2)
         split_layout.addWidget(self.val_spin)
         
@@ -929,7 +999,7 @@ class ExportDialog(QDialog):
         self.test_spin = QDoubleSpinBox()
         self.test_spin.setRange(0.0, 1.0)
         self.test_spin.setSingleStep(0.05)
-        self.test_spin.setValue(0.1)
+        self.test_spin.setValue(0.0)
         self.test_spin.setDecimals(2)
         split_layout.addWidget(self.test_spin)
         
@@ -970,14 +1040,25 @@ class ExportDialog(QDialog):
         button_box.accepted.connect(self.accept)
         button_box.rejected.connect(self.reject)
         layout.addWidget(button_box)
-    
+
+    def _detached_warning(self, title: str, text: str):
+        message = QMessageBox()
+        message.setIcon(QMessageBox.Icon.Warning)
+        message.setWindowTitle(title)
+        message.setText(text)
+        message.setStandardButtons(QMessageBox.StandardButton.Ok)
+        message.setDefaultButton(QMessageBox.StandardButton.Ok)
+        message.setWindowModality(Qt.WindowModality.ApplicationModal)
+        message.setWindowFlag(Qt.WindowType.Window, True)
+        message.exec()
+
     def add_label(self):
         """新增 label"""
         new_label = self.new_label_input.text().strip()
         if not new_label:
             return
         if new_label in self.labels:
-            QMessageBox.warning(self, "Warning", f"Label '{new_label}' already exists")
+            self._detached_warning("Warning", f"Label '{new_label}' already exists")
             return
         
         self.labels.append(new_label)
@@ -993,7 +1074,7 @@ class ExportDialog(QDialog):
     def remove_label(self, label: str):
         """移除 label"""
         if len(self.labels) <= 1:
-            QMessageBox.warning(self, "Warning", "Must have at least one label")
+            self._detached_warning("Warning", "Must have at least one label")
             return
         if label in self.labels:
             self.labels.remove(label)
@@ -1080,7 +1161,7 @@ class ExportDialog(QDialog):
     def browse_directory(self):
         """選擇輸出目錄"""
         dir_path = QFileDialog.getExistingDirectory(
-            self, "Select Output Directory", self.dir_input.text()
+            None, "Select Output Directory", self.dir_input.text()
         )
         if dir_path:
             self.dir_input.setText(dir_path)
@@ -1194,6 +1275,7 @@ class STAMPMainWindow(QMainWindow):
         # Detection worker 狀態
         self.worker: Optional[SAM3Worker] = None
         self.progress_dialog: Optional[QProgressDialog] = None
+        self.export_worker: Optional[ExportWorker] = None
         self._is_image_folder_mode: bool = False  # 是否為圖片資料夾模式
         
         # 設定 UI
@@ -1209,6 +1291,57 @@ class STAMPMainWindow(QMainWindow):
         self.setGeometry(100, 50, 1400, 900)
         
         self.statusBar().showMessage("Ready - Please open a video file")
+
+    def _prepare_detached_dialog(self, dialog: QDialog) -> QDialog:
+        """Make a dialog movable independently while keeping the workflow modal."""
+        dialog.setParent(None)
+        dialog.setWindowModality(Qt.WindowModality.ApplicationModal)
+        dialog.setWindowFlag(Qt.WindowType.Window, True)
+        dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, False)
+        return dialog
+
+    def _exec_detached_dialog(self, dialog: QDialog) -> int:
+        return self._prepare_detached_dialog(dialog).exec()
+
+    def _make_detached_progress_dialog(
+        self,
+        label_text: str,
+        cancel_text: Optional[str],
+        minimum: int,
+        maximum: int,
+        title: str,
+    ) -> QProgressDialog:
+        progress = QProgressDialog(label_text, cancel_text, minimum, maximum)
+        progress.setWindowTitle(title)
+        progress.setMinimumDuration(0)
+        progress.setAutoClose(False)
+        progress.setAutoReset(False)
+        return self._prepare_detached_dialog(progress)
+
+    def _detached_message_box(
+        self,
+        icon: QMessageBox.Icon,
+        title: str,
+        text: str,
+        buttons: QMessageBox.StandardButton = QMessageBox.StandardButton.Ok,
+        default_button: QMessageBox.StandardButton = QMessageBox.StandardButton.Ok,
+    ) -> QMessageBox.StandardButton:
+        message = QMessageBox()
+        message.setIcon(icon)
+        message.setWindowTitle(title)
+        message.setText(text)
+        message.setStandardButtons(buttons)
+        message.setDefaultButton(default_button)
+        return self._exec_detached_dialog(message)
+
+    def _get_detached_text(self, title: str, label: str, text: str = "") -> Tuple[str, bool]:
+        dialog = QInputDialog()
+        dialog.setWindowTitle(title)
+        dialog.setLabelText(label)
+        dialog.setTextValue(text)
+        dialog.setInputMode(QInputDialog.InputMode.TextInput)
+        accepted = self._exec_detached_dialog(dialog) == QDialog.DialogCode.Accepted
+        return dialog.textValue(), accepted
     
     def setup_ui(self):
         """建立使用者介面。"""
@@ -1258,16 +1391,17 @@ class STAMPMainWindow(QMainWindow):
         left_layout.addLayout(slider_layout)
         
         # 控制按鈕
+        # Button controls
         control_layout = QHBoxLayout()
         
         self.open_btn = QPushButton("Open Video")
         self.open_btn.clicked.connect(self.smart_open)  # 根據模式智能開啟
         control_layout.addWidget(self.open_btn)
         
-        self.detect_btn = QPushButton("Run Detection")
-        self.detect_btn.clicked.connect(self.run_detection)
-        self.detect_btn.setEnabled(False)
-        control_layout.addWidget(self.detect_btn)
+        self.export_btn = QPushButton("Export")
+        self.export_btn.clicked.connect(self.export_results)
+        self.export_btn.setEnabled(False)
+        control_layout.addWidget(self.export_btn)
         
         control_layout.addSpacing(20)
         
@@ -1363,12 +1497,21 @@ class STAMPMainWindow(QMainWindow):
         settings_group.setLayout(settings_layout)
         
         # Prompt 輸入
+        # Prompt input
         prompt_layout = QHBoxLayout()
         prompt_layout.addWidget(QLabel("Prompt:"))
         from PyQt6.QtWidgets import QLineEdit
         self.prompt_input = QLineEdit("")
         prompt_layout.addWidget(self.prompt_input)
         settings_layout.addLayout(prompt_layout)
+
+        self.detect_btn = QPushButton("Run Detection")
+        self.detect_btn.clicked.connect(self.run_detection)
+        self.detect_btn.setEnabled(False)
+        settings_layout.addWidget(self.detect_btn)
+
+        # Confidence thresholds
+        thresh_layout = QHBoxLayout()
         
         # 閾值設定
         thresh_layout = QHBoxLayout()
@@ -1475,6 +1618,7 @@ class STAMPMainWindow(QMainWindow):
         self.refine_btn.setToolTip("Enter refinement mode: Left-click to include, Right-click to exclude")
         self.refine_btn.clicked.connect(self.start_refinement_for_selected)
         self.refine_btn.setEnabled(False)
+        self.refine_btn.setVisible(False)
         self.refine_btn.setStyleSheet("""
             QPushButton {
                 background-color: #2196F3;
@@ -1490,7 +1634,6 @@ class STAMPMainWindow(QMainWindow):
                 color: #999;
             }
         """)
-        refine_layout.addWidget(self.refine_btn)
         
         # Add Object 按鈕（手動新增物件）
         self.add_object_btn = QPushButton("+ Add Object")
@@ -1628,64 +1771,59 @@ class STAMPMainWindow(QMainWindow):
     # =========================================================================
     
     def show_object_context_menu(self, position: QPoint):
-        """顯示物件右鍵選單。"""
+        """Show object context menu."""
         item = self.object_list.itemAt(position)
         if item is None:
             return
-        
+
         widget = self.object_list.itemWidget(item)
         if widget is None:
             return
-        
+
         obj_id = widget.property("obj_id")
-        frame_idx = widget.property("frame_idx")  # 可能為 None（Video 模式）
+        frame_idx = widget.property("frame_idx")
         if obj_id is None:
             return
-        
-        # 建立右鍵選單
+
         menu = QMenu(self)
-        
-        # 判斷是否為 Independent Images 模式
         is_independent_mode = (self.processing_mode_combo.currentIndex() == 1)
-        
-        # 刪除物件
+        target_frame = frame_idx if frame_idx is not None else self.current_frame
+
+        refine_action = menu.addAction("Refine Selected")
+        refine_action.triggered.connect(self.start_refinement_for_selected)
+        menu.addSeparator()
+
         if not is_independent_mode:
             delete_action = menu.addAction("Delete Object (All Frames)")
             delete_action.triggered.connect(lambda: self.delete_object(obj_id))
-        
-        # 只刪除當前幀（兩種模式都有）
-        ignore_action = menu.addAction("Ignore / Out of Scope")
-        ignore_action.triggered.connect(lambda: self.ignore_object(obj_id))
 
         delete_this_action = menu.addAction("Delete This Detection Only")
-        # Independent 模式用物件所在的幀，Video 模式用當前顯示的幀
-        target_frame = frame_idx if frame_idx is not None else self.current_frame
         delete_this_action.triggered.connect(lambda: self.delete_object_single_frame(obj_id, target_frame))
-        
-        # Video 模式額外提供「從當前幀刪到最後」
+
         if not is_independent_mode:
             delete_from_action = menu.addAction("Delete From Current Frame Onwards")
             delete_from_action.triggered.connect(lambda: self.delete_object_from_frame(obj_id, self.current_frame))
-        
+
         menu.addSeparator()
-        
-        # 合併物件
-        merge_action = menu.addAction("Merge Into Another Object...")
-        merge_action.triggered.connect(lambda: self.show_merge_dialog(obj_id))
-        
-        # 交換標籤
+
         swap_action = menu.addAction("Swap Label With...")
         swap_action.triggered.connect(lambda: self.show_swap_dialog(obj_id))
-        
+
+        merge_action = menu.addAction("Merge Into Another Object...")
+        merge_action.triggered.connect(lambda: self.show_merge_dialog(obj_id))
+
         menu.addSeparator()
-        
-        # 跳轉到物件首次出現的幀
+
+        ignore_action = menu.addAction("Ignore / Out of Scope")
+        ignore_action.triggered.connect(lambda: self.ignore_object(obj_id))
+
+        menu.addSeparator()
+
         jump_action = menu.addAction("Jump to First Appearance")
         jump_action.triggered.connect(lambda: self.jump_to_object_first_frame(obj_id))
-        
-        # 顯示選單
+
         menu.exec(self.object_list.mapToGlobal(position))
-    
+
     def _drop_object_status(self, obj_id: int):
         """Remove review status entries for an object across all modes."""
         keys_to_remove = []
@@ -1706,8 +1844,8 @@ class STAMPMainWindow(QMainWindow):
         object from rendered detections, object list, timeline, export, and analysis.
         """
         obj_id = int(obj_id)
-        reply = QMessageBox.question(
-            self,
+        reply = self._detached_message_box(
+            QMessageBox.Icon.Question,
             "Ignore Object",
             (
                 f"Ignore Object {obj_id} as out-of-scope?\n\n"
@@ -1772,8 +1910,9 @@ class STAMPMainWindow(QMainWindow):
             obj_id: 要刪除的物件 ID
         """
         # 確認操作
-        reply = QMessageBox.question(
-            self, "Confirm Delete",
+        reply = self._detached_message_box(
+            QMessageBox.Icon.Question,
+            "Confirm Delete",
             f"Delete Object {obj_id} from ALL frames?\n\nThis action cannot be undone.",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
         )
@@ -1829,8 +1968,9 @@ class STAMPMainWindow(QMainWindow):
         total_frames = self.video_loader.metadata.total_frames
         
         # 確認操作
-        reply = QMessageBox.question(
-            self, "Confirm Delete",
+        reply = self._detached_message_box(
+            QMessageBox.Icon.Question,
+            "Confirm Delete",
             f"Delete Object {obj_id} from frame {from_frame} to {total_frames - 1}?\n\n"
             f"Frames 0 to {from_frame - 1} will be preserved.\n"
             "This action cannot be undone.",
@@ -1884,8 +2024,9 @@ class STAMPMainWindow(QMainWindow):
             return
         
         # 確認操作
-        reply = QMessageBox.question(
-            self, "Confirm Delete",
+        reply = self._detached_message_box(
+            QMessageBox.Icon.Question,
+            "Confirm Delete",
             f"Delete Object {obj_id} from frame {frame_idx} only?\n\n"
             "Other frames will not be affected.\n"
             "This action cannot be undone.",
@@ -1937,11 +2078,15 @@ class STAMPMainWindow(QMainWindow):
         objects = self._get_all_object_info()
         
         if len(objects) < 2:
-            QMessageBox.warning(self, "Warning", "Need at least 2 objects to merge")
+            self._detached_message_box(
+                QMessageBox.Icon.Warning,
+                "Warning",
+                "Need at least 2 objects to merge",
+            )
             return
         
         dialog = ObjectSelectionDialog(
-            self,
+            None,
             title="Merge Object",
             message=f"Merge Object {source_obj_id} INTO which object?\n\n"
                     f"Object {source_obj_id} will be deleted and its detections "
@@ -1950,7 +2095,7 @@ class STAMPMainWindow(QMainWindow):
             exclude_obj_id=source_obj_id
         )
         
-        if dialog.exec() == QDialog.DialogCode.Accepted:
+        if self._exec_detached_dialog(dialog) == QDialog.DialogCode.Accepted:
             target_obj_id = dialog.get_selected_obj_id()
             if target_obj_id is not None:
                 self.merge_objects(source_obj_id, target_obj_id)
@@ -2013,8 +2158,9 @@ class STAMPMainWindow(QMainWindow):
             
             if has_source and has_target:
                 # 警告用戶
-                reply = QMessageBox.warning(
-                    self, "Warning: Overlapping Objects",
+                reply = self._detached_message_box(
+                    QMessageBox.Icon.Warning,
+                    "Warning: Overlapping Objects",
                     f"Both Object {source_obj_id} and Object {target_obj_id} exist in the current frame.\n\n"
                     f"If you merge, Object {source_obj_id}'s mask will be REMOVED in frames where both exist.\n\n"
                     f"Continue with merge?",
@@ -2092,11 +2238,15 @@ class STAMPMainWindow(QMainWindow):
         objects = self._get_all_object_info()
         
         if len(objects) < 2:
-            QMessageBox.warning(self, "Warning", "Need at least 2 objects to swap")
+            self._detached_message_box(
+                QMessageBox.Icon.Warning,
+                "Warning",
+                "Need at least 2 objects to swap",
+            )
             return
         
         dialog = ObjectSelectionDialog(
-            self,
+            None,
             title="Swap Labels",
             message=f"Swap Object {obj_id_a} label with which object?\n\n"
                     f"This will exchange the object IDs in ALL frames.",
@@ -2104,7 +2254,7 @@ class STAMPMainWindow(QMainWindow):
             exclude_obj_id=obj_id_a
         )
         
-        if dialog.exec() == QDialog.DialogCode.Accepted:
+        if self._exec_detached_dialog(dialog) == QDialog.DialogCode.Accepted:
             obj_id_b = dialog.get_selected_obj_id()
             if obj_id_b is not None:
                 self.swap_object_labels(obj_id_a, obj_id_b)
@@ -2180,7 +2330,11 @@ class STAMPMainWindow(QMainWindow):
             self.seek_to_frame(first_frame)
             self.statusBar().showMessage(f"Object {obj_id} first appears at frame {first_frame}")
         else:
-            QMessageBox.information(self, "Info", f"Object {obj_id} not found in any frame")
+            self._detached_message_box(
+                QMessageBox.Icon.Information,
+                "Info",
+                f"Object {obj_id} not found in any frame",
+            )
     
     def _get_all_object_info(self) -> List[Tuple[int, float]]:
         """
@@ -2316,6 +2470,18 @@ class STAMPMainWindow(QMainWindow):
         obj_id = item.data(Qt.ItemDataRole.UserRole)
         return int(obj_id) if obj_id is not None else None
 
+    def _overlay_style_for_frame(self, frame: np.ndarray) -> OverlayStyle:
+        height, width = frame.shape[:2]
+        scale = max(1.0, max(width, height) / 1920.0)
+        return OverlayStyle(
+            box_thickness=max(2, int(round(2 * scale))),
+            label_thickness=max(1, int(round(scale))),
+            font_scale=0.45 * scale,
+            label_padding=max(2, int(round(2 * scale))),
+            polygon_outer_thickness=max(2, int(round(2 * scale))),
+            polygon_inner_thickness=max(1, int(round(1 * scale))),
+        )
+
     def visualize_frame(
         self, 
         frame: np.ndarray, 
@@ -2329,6 +2495,7 @@ class STAMPMainWindow(QMainWindow):
         high_thresh = self.high_thresh_spin.value()
         low_thresh = self.low_thresh_spin.value()
         selected_polygon_obj_id = self.get_selected_polygon_obj_id()
+        overlay_style = self._overlay_style_for_frame(frame)
         
         # 判斷是否為 Independent 模式
         is_independent_mode = (self.processing_mode_combo.currentIndex() == 1)
@@ -2389,7 +2556,7 @@ class STAMPMainWindow(QMainWindow):
             # 繪製 bounding box
             if self.show_boxes:
                 x, y, w, h = det.box.astype(int)
-                cv2.rectangle(output, (x, y), (x + w, y + h), border_color, 2)
+                cv2.rectangle(output, (x, y), (x + w, y + h), border_color, overlay_style.box_thickness)
                 
                 # 標籤
                 label = f"{det.obj_id}:{det.score:.2f}"
@@ -2407,8 +2574,8 @@ class STAMPMainWindow(QMainWindow):
                     center_x = x + w // 2
                     top_y = y
                 
-                font_scale = 0.45
-                thickness = 1
+                font_scale = overlay_style.font_scale
+                thickness = overlay_style.label_thickness
                 (text_w, text_h), _ = cv2.getTextSize(
                     label, cv2.FONT_HERSHEY_SIMPLEX, font_scale, thickness
                 )
@@ -2418,8 +2585,8 @@ class STAMPMainWindow(QMainWindow):
                 
                 cv2.rectangle(
                     output,
-                    (label_x - 2, label_y - text_h - 2),
-                    (label_x + text_w + 2, label_y + 2),
+                    (label_x - overlay_style.label_padding, label_y - text_h - overlay_style.label_padding),
+                    (label_x + text_w + overlay_style.label_padding, label_y + overlay_style.label_padding),
                     color, -1
                 )
                 cv2.putText(
@@ -2434,8 +2601,14 @@ class STAMPMainWindow(QMainWindow):
             result_frame = output
 
         if self.show_polygons and polygon_contours:
-            cv2.drawContours(result_frame, polygon_contours, -1, (0, 0, 0), 4, cv2.LINE_AA)
-            cv2.drawContours(result_frame, polygon_contours, -1, (255, 255, 255), 2, cv2.LINE_AA)
+            cv2.drawContours(
+                result_frame, polygon_contours, -1, (0, 0, 0),
+                overlay_style.polygon_outer_thickness, cv2.LINE_AA
+            )
+            cv2.drawContours(
+                result_frame, polygon_contours, -1, (255, 255, 255),
+                overlay_style.polygon_inner_thickness, cv2.LINE_AA
+            )
         
         return result_frame
     
@@ -2446,7 +2619,7 @@ class STAMPMainWindow(QMainWindow):
     def open_video(self):
         """開啟影片檔案。"""
         file_path, _ = QFileDialog.getOpenFileName(
-            self,
+            None,
             "Select Video",
             "",
             "Video Files (*.mp4 *.avi *.mov *.mkv *webm *m4v *MP4 *AVI *MOV *MKV *WEBM *M4V);;All Files (*)"
@@ -2479,6 +2652,7 @@ class STAMPMainWindow(QMainWindow):
             self.object_status = {}
             self.ignored_obj_ids.clear()
             self.object_list.clear()
+            self.export_btn.setEnabled(False)
             
             # 更新 UI
             total = self.video_loader.metadata.total_frames
@@ -2527,12 +2701,16 @@ class STAMPMainWindow(QMainWindow):
             self.statusBar().showMessage(f"Opened: {file_path} | Logs: {logs_dir}")
             
         except Exception as e:
-            QMessageBox.critical(self, "Error", f"Cannot open video:\n{e}")
+            self._detached_message_box(
+                QMessageBox.Icon.Critical,
+                "Error",
+                f"Cannot open video:\n{e}",
+            )
     
     def open_image_folder(self):
         """開啟圖片資料夾（獨立處理模式）。"""
         folder_path = QFileDialog.getExistingDirectory(
-            self,
+            None,
             "Select Image Folder",
             "",
             QFileDialog.Option.ShowDirsOnly
@@ -2562,6 +2740,7 @@ class STAMPMainWindow(QMainWindow):
             self.object_status = {}
             self.ignored_obj_ids.clear()
             self.object_list.clear()
+            self.export_btn.setEnabled(False)
             self._original_video_path = None
             self._server_video_path = None
 
@@ -2617,7 +2796,11 @@ class STAMPMainWindow(QMainWindow):
             )
             
         except Exception as e:
-            QMessageBox.critical(self, "Error", f"Cannot open image folder:\n{e}")
+            self._detached_message_box(
+                QMessageBox.Icon.Critical,
+                "Error",
+                f"Cannot open image folder:\n{e}",
+            )
     
     def next_frame(self):
         """下一幀。"""
@@ -2724,7 +2907,11 @@ class STAMPMainWindow(QMainWindow):
 
         prompt = self.prompt_input.text().strip()
         if not prompt:
-            QMessageBox.warning(self, "Warning", "Please enter a detection prompt")
+            self._detached_message_box(
+                QMessageBox.Icon.Warning,
+                "Warning",
+                "Please enter a detection prompt",
+            )
             return
         
         mode = self.mode_combo.currentText()
@@ -2761,14 +2948,9 @@ class STAMPMainWindow(QMainWindow):
         self.action_logger.log_detection_started(prompt=prompt, frame_idx=0)
         
         # 建立進度對話框
-        self.progress_dialog = QProgressDialog(
-            "Running SAM3 detection...", "Cancel", 0, 100, self
+        self.progress_dialog = self._make_detached_progress_dialog(
+            "Running SAM3 detection...", "Cancel", 0, 100, "Processing"
         )
-        self.progress_dialog.setWindowTitle("Processing")
-        self.progress_dialog.setWindowModality(Qt.WindowModality.WindowModal)
-        self.progress_dialog.setMinimumDuration(0)
-        self.progress_dialog.setAutoClose(False)  # 不要自動關閉
-        self.progress_dialog.setAutoReset(False)  # 不要自動重設
         
         # 建立並啟動 worker 執行緒
         if self._execution_mode == "server":
@@ -2802,14 +2984,19 @@ class STAMPMainWindow(QMainWindow):
             image_paths = self.video_loader.metadata.image_paths
         else:
             # 如果是 VideoLoader，需要先提取幀（這種情況較少見）
-            QMessageBox.warning(
-                self, "Warning", 
+            self._detached_message_box(
+                QMessageBox.Icon.Warning,
+                "Warning",
                 "Please use 'Open Image Folder' for independent image processing,\n"
-                "or switch to 'Video (Sequential Tracking)' mode."
+                "or switch to 'Video (Sequential Tracking)' mode.",
             )
             return
         
         total = len(image_paths)
+        if not self._confirm_batch_detection(prompt, total):
+            self.statusBar().showMessage("Batch detection cancelled before start")
+            return
+
         logger.info(f"Starting batch detection: {total} images, prompt={prompt}, mode={mode}")
         
         # === ActionLogger: 記錄偵測開始 ===
@@ -2817,14 +3004,9 @@ class STAMPMainWindow(QMainWindow):
         self.action_logger.log_detection_started(prompt=prompt, frame_idx=0)
         
         # 建立進度對話框
-        self.progress_dialog = QProgressDialog(
-            f"Processing {total} images...", "Cancel", 0, total, self
+        self.progress_dialog = self._make_detached_progress_dialog(
+            f"Processing {total} images...", "Cancel", 0, total, "Batch Processing"
         )
-        self.progress_dialog.setWindowTitle("Batch Processing")
-        self.progress_dialog.setWindowModality(Qt.WindowModality.WindowModal)
-        self.progress_dialog.setMinimumDuration(0)
-        self.progress_dialog.setAutoClose(False)
-        self.progress_dialog.setAutoReset(False)
         
         # 建立並啟動 ImageBatchWorker
         if self._execution_mode == "server":
@@ -2850,6 +3032,22 @@ class STAMPMainWindow(QMainWindow):
         
         self.detect_btn.setEnabled(False)
         self.worker.start()
+
+    def _confirm_batch_detection(self, prompt: str, total_images: int) -> bool:
+        msg = (
+            "Run independent image detection?\n\n"
+            f"Prompt: {prompt}\n"
+            f"Images: {total_images}\n\n"
+            "Continue with detection?"
+        )
+        reply = self._detached_message_box(
+            QMessageBox.Icon.Question,
+            "Confirm Detection",
+            msg,
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.Yes,
+        )
+        return reply == QMessageBox.StandardButton.Yes
     
     # =========================================================================
     # Batch Processing Callbacks (for Independent Image Mode)
@@ -2952,7 +3150,11 @@ class STAMPMainWindow(QMainWindow):
             display_msg = error_msg[:1000] + "\n\n... (see terminal for full error)"
         
         logger.error(f"Batch detection error:\n{error_msg}")
-        QMessageBox.critical(self, "Batch Detection Error", f"Processing failed:\n\n{display_msg}")
+        self._detached_message_box(
+            QMessageBox.Icon.Critical,
+            "Batch Detection Error",
+            f"Processing failed:\n\n{display_msg}",
+        )
     
     def on_batch_cancelled(self):
         """批次處理被取消。"""
@@ -3049,8 +3251,8 @@ class STAMPMainWindow(QMainWindow):
             )
         
         # 顯示確認對話框
-        reply = QMessageBox.question(
-            self, 
+        reply = self._detached_message_box(
+            QMessageBox.Icon.Question,
             "Confirm Propagation",
             msg,
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
@@ -3442,7 +3644,11 @@ class STAMPMainWindow(QMainWindow):
             display_msg = error_msg[:1000] + "\n\n... (see terminal for full error)"
         
         logger.error(f"Detection error:\n{error_msg}")
-        QMessageBox.critical(self, "Detection Error", f"SAM3 detection failed:\n\n{display_msg}")
+        self._detached_message_box(
+            QMessageBox.Icon.Critical,
+            "Detection Error",
+            f"SAM3 detection failed:\n\n{display_msg}",
+        )
     
     # =========================================================================
     # 物件列表管理
@@ -3464,6 +3670,7 @@ class STAMPMainWindow(QMainWindow):
         
         self.accept_all_btn.setEnabled(self.object_list.count() > 0)
         self.reset_all_btn.setEnabled(self.object_list.count() > 0)
+        self.export_btn.setEnabled(len(self.sam3_results) > 0)
     
     def _update_object_list_video(self):
         """Video 模式：顯示跨幀聚合的物件列表。"""
@@ -3597,13 +3804,36 @@ class STAMPMainWindow(QMainWindow):
         self.display_frame(self.current_frame)  # 重新顯示以更新視覺化
     
     def accept_all(self):
-        """接受所有尚未審核的物件（pending 狀態）。"""
+        """Accept all pending objects."""
+        is_independent_mode = (self.processing_mode_combo.currentIndex() == 1)
+
+        if is_independent_mode:
+            accepted_count = 0
+            for frame_idx, frame_result in self.sam3_results.items():
+                for det in frame_result.detections:
+                    if det.obj_id in self.ignored_obj_ids:
+                        continue
+                    key = f"F{frame_idx}_{det.obj_id}"
+                    if self.object_status.get(key, "pending") == "pending":
+                        self.object_status[key] = "accepted"
+                        accepted_count += 1
+                        self.action_logger.log_approve_object(
+                            frame_idx=frame_idx,
+                            obj_id=det.obj_id,
+                        )
+
+            self.update_object_list()
+            self.update_timeline()
+            self.display_frame(self.current_frame)
+            self.statusBar().showMessage(f"Accepted {accepted_count} pending objects across all images")
+            return
+
         for i in range(self.object_list.count()):
             item = self.object_list.item(i)
             widget = self.object_list.itemWidget(item)
-            if widget and widget.status == "pending":  # 只接受 pending 的
+            if widget and widget.status == "pending":
                 widget.accept()
-    
+
     def reset_all_objects(self):
         """重設所有物件狀態。"""
         is_independent_mode = (self.processing_mode_combo.currentIndex() == 1)
@@ -3722,10 +3952,10 @@ class STAMPMainWindow(QMainWindow):
         resolved_output = output_dir.resolve()
 
         if resolved_target.parent != resolved_output or resolved_target == resolved_output:
-            QMessageBox.warning(
-                self,
+            self._detached_message_box(
+                QMessageBox.Icon.Warning,
                 "Invalid Export Path",
-                "Refusing to clear an export folder outside the selected output directory."
+                "Refusing to clear an export folder outside the selected output directory.",
             )
             return False
 
@@ -3741,7 +3971,7 @@ class STAMPMainWindow(QMainWindow):
         if not target_dir.exists():
             return target_dir
 
-        message = QMessageBox(self)
+        message = QMessageBox()
         message.setIcon(QMessageBox.Icon.Warning)
         message.setWindowTitle("Export Folder Exists")
         message.setText(f"The export folder already exists:\n{target_dir}")
@@ -3752,7 +3982,7 @@ class STAMPMainWindow(QMainWindow):
         rename_btn = message.addButton("Change Name", QMessageBox.ButtonRole.ActionRole)
         cancel_btn = message.addButton("Cancel", QMessageBox.ButtonRole.RejectRole)
         message.setDefaultButton(cancel_btn)
-        message.exec()
+        self._exec_detached_dialog(message)
 
         clicked_btn = message.clickedButton()
         if clicked_btn == cancel_btn:
@@ -3766,8 +3996,7 @@ class STAMPMainWindow(QMainWindow):
         if clicked_btn == rename_btn:
             suggested_name = self._next_available_dataset_name(output_dir, dataset_name)
             while True:
-                new_name, ok = QInputDialog.getText(
-                    self,
+                new_name, ok = self._get_detached_text(
                     "Change Dataset Name",
                     "Dataset name:",
                     text=suggested_name,
@@ -3777,25 +4006,29 @@ class STAMPMainWindow(QMainWindow):
 
                 new_name = new_name.strip()
                 if not new_name:
-                    QMessageBox.warning(self, "Invalid Name", "Dataset name cannot be empty.")
+                    self._detached_message_box(
+                        QMessageBox.Icon.Warning,
+                        "Invalid Name",
+                        "Dataset name cannot be empty.",
+                    )
                     suggested_name = self._next_available_dataset_name(output_dir, dataset_name)
                     continue
 
                 new_target_dir = output_dir / new_name
                 if new_target_dir.resolve().parent != output_dir.resolve():
-                    QMessageBox.warning(
-                        self,
+                    self._detached_message_box(
+                        QMessageBox.Icon.Warning,
                         "Invalid Name",
-                        "Dataset name cannot include a path or point outside the output directory."
+                        "Dataset name cannot include a path or point outside the output directory.",
                     )
                     suggested_name = self._next_available_dataset_name(output_dir, dataset_name)
                     continue
 
                 if new_target_dir.exists():
-                    QMessageBox.warning(
-                        self,
+                    self._detached_message_box(
+                        QMessageBox.Icon.Warning,
                         "Export Folder Exists",
-                        f"The export folder still exists:\n{new_target_dir}\n\nPlease choose another name."
+                        f"The export folder still exists:\n{new_target_dir}\n\nPlease choose another name.",
                     )
                     suggested_name = self._next_available_dataset_name(output_dir, new_name)
                     continue
@@ -3805,13 +4038,17 @@ class STAMPMainWindow(QMainWindow):
         return None
 
     def export_results(self):
-        """匯出標註結果。"""
+        """Export annotation results."""
         if not self.sam3_results:
-            QMessageBox.warning(self, "Warning", "No results to export")
+            self._detached_message_box(
+                QMessageBox.Icon.Warning,
+                "Warning",
+                "No results to export",
+            )
             return
-        
-        # 取得預設名稱（影片檔名）
-        # 取得預設名稱和影像來源路徑
+
+        self.action_logger.mark_annotation_complete()
+
         is_independent_mode = (self.processing_mode_combo.currentIndex() == 1)
         video_fps = self.video_loader.metadata.fps
 
@@ -3821,56 +4058,55 @@ class STAMPMainWindow(QMainWindow):
         else:
             default_name = Path(self.video_loader.video_path).stem
             video_path_for_export = getattr(self, '_original_video_path', str(self.video_loader.video_path))
-        
-        # 收集 object 資訊
+
         object_info = []
         if self.video_analysis and self.video_analysis.object_summaries:
             for obj_id, summary in self.video_analysis.object_summaries.items():
                 object_info.append({
                     'obj_id': obj_id,
                     'avg_score': summary.avg_score,
-                    'status': self.object_status.get(obj_id, 'pending')
+                    'status': self.object_status.get(obj_id, 'pending'),
                 })
         else:
-            # 從 results 中收集 unique object IDs
             all_obj_ids = set()
             obj_scores = {}
             for frame_result in self.sam3_results.values():
                 for det in frame_result.detections:
                     all_obj_ids.add(det.obj_id)
-                    if det.obj_id not in obj_scores:
-                        obj_scores[det.obj_id] = []
-                    obj_scores[det.obj_id].append(det.score)
-            
+                    obj_scores.setdefault(det.obj_id, []).append(det.score)
+
             for obj_id in sorted(all_obj_ids):
                 scores = obj_scores.get(obj_id, [0])
                 object_info.append({
                     'obj_id': obj_id,
                     'avg_score': sum(scores) / len(scores),
-                    'status': self.object_status.get(obj_id, 'pending')
+                    'status': self.object_status.get(obj_id, 'pending'),
                 })
-        
-        # 建立 Export 對話框（傳入 object_info）
+
         dialog = ExportDialog(
-            self, 
-            default_name=default_name, 
+            None,
+            default_name=default_name,
             video_fps=video_fps,
-            object_info=object_info
+            object_info=object_info,
         )
-        if dialog.exec() != QDialog.DialogCode.Accepted:
+        if self._exec_detached_dialog(dialog) != QDialog.DialogCode.Accepted:
+            self.action_logger.clear_annotation_complete()
             return
-        
-        # 驗證設定
+
         if not dialog.is_valid():
-            QMessageBox.warning(self, "Warning", "Train/Val/Test ratios must sum to 1.0")
+            self.action_logger.clear_annotation_complete()
+            self._detached_message_box(
+                QMessageBox.Icon.Warning,
+                "Warning",
+                "Train/Val/Test ratios must sum to 1.0",
+            )
             return
-        
-        # 取得匯出設定
+
         formats = dialog.get_selected_formats()
         output_dir = dialog.get_output_dir()
         dataset_name = dialog.get_dataset_name()
         labels = dialog.get_labels()
-        object_labels = dialog.get_object_labels()  # obj_id -> label_name
+        object_labels = dialog.get_object_labels()
         frame_interval = dialog.get_frame_interval()
         include_rejected = dialog.get_include_rejected()
         include_stamp_fields = dialog.get_include_stamp_fields()
@@ -3878,30 +4114,21 @@ class STAMPMainWindow(QMainWindow):
 
         prepared_target_dir = self._prepare_export_target_dir(Path(output_dir), dataset_name)
         if prepared_target_dir is None:
+            self.action_logger.clear_annotation_complete()
             return
         output_dir = str(prepared_target_dir.parent)
         dataset_name = prepared_target_dir.name
-        
-        # 計算 frame step
+
         if frame_interval > 0:
             frame_step = max(1, int(frame_interval * video_fps))
         else:
-            frame_step = 1  # Export all frames
-        
-        # 建立 categories（從 labels 生成）
+            frame_step = 1
+
         categories = [{"id": i, "name": label, "supercategory": "object"} for i, label in enumerate(labels)]
-        
-        # 建立 label_name -> category_id 的對應
-        label_to_cat_id = {label: i for i, label in enumerate(labels)}
-        
-        # 建立 obj_id -> category_id 的對應
-        object_category_ids = {obj_id: label_to_cat_id.get(label, 0) for obj_id, label in object_labels.items()}
-        
-        # 建立 ExportConfig
+
         config = ExportConfig(
             output_dir=Path(output_dir),
             base_name=dataset_name,
-            # 使用原始本地路徑（而非 Server 路徑）
             video_path=video_path_for_export,
             video_fps=video_fps,
             video_width=self.video_loader.metadata.width,
@@ -3912,84 +4139,117 @@ class STAMPMainWindow(QMainWindow):
             frame_step=frame_step,
             train_ratio=train_ratio,
             val_ratio=val_ratio,
-            test_ratio=test_ratio
+            test_ratio=test_ratio,
         )
-        
-        # 建立進度對話框
-        progress = QProgressDialog("Exporting annotations...", None, 0, 0, self)
-        progress.setWindowModality(Qt.WindowModality.WindowModal)
-        progress.setMinimumDuration(0)
+
+        progress = self._make_detached_progress_dialog(
+            "Exporting annotations...", None, 0, 100, "Exporting"
+        )
         progress.show()
         QApplication.processEvents()
-        
-        # 執行匯出
-        try:
-            exporter = AnnotationExporter(config)
-            stats = exporter.export_all(
-                self.sam3_results,
-                self.object_status,
-                self.video_analysis,
-                formats=formats,
-                object_labels=object_labels  # 傳入 object -> label 對應
-            )
-            
+
+        self._pending_export_context = {
+            "progress": progress,
+            "frame_step": frame_step,
+            "labels": labels,
+            "num_objects": self.video_analysis.unique_objects if self.video_analysis else 0,
+        }
+        self._set_controls_enabled(False)
+
+        self.export_worker = ExportWorker(
+            config=config,
+            results=self.sam3_results,
+            object_status=self.object_status,
+            video_analysis=self.video_analysis,
+            formats=formats,
+            object_labels=object_labels,
+        )
+        self.export_worker.progress.connect(self._on_export_progress)
+        self.export_worker.export_finished.connect(self._on_export_finished)
+        self.export_worker.export_error.connect(self._on_export_error)
+        self.export_worker.start()
+
+    def _on_export_progress(self, percent: int, message: str):
+        context = getattr(self, "_pending_export_context", {})
+        progress = context.get("progress")
+        if progress is not None:
+            progress.setValue(percent)
+            progress.setLabelText(message)
+
+    def _on_export_finished(self, stats: ExportStats):
+        context = getattr(self, "_pending_export_context", {})
+        progress = context.get("progress")
+        if progress is not None:
             progress.close()
-            
-            # === ActionLogger: 記錄匯出操作 ===
-            self.action_logger.relocate_output_dir(Path(stats.output_dir) / "logs")
-            self.action_logger.log_export(
-                format=", ".join(stats.formats_exported),
-                output_path=str(stats.output_dir),
-                num_frames=stats.total_frames,
-                num_objects=self.video_analysis.unique_objects if self.video_analysis else 0
-            )
-            
-            # 顯示結果
-            interval_info = f"(every {frame_step} frames)" if frame_step > 1 else "(all frames)"
-            labels_str = ", ".join(labels)
-            msg = (
-                f"Export Complete!\n\n"
-                f"Total Frames: {stats.total_frames} {interval_info}\n"
-                f"Total Annotations: {stats.total_annotations}\n"
-                f"Labels: {labels_str}\n\n"
-                f"Dataset Split (COCO/Parquet):\n"
-                f"  Train: {stats.train_images} images\n"
-                f"  Val: {stats.val_images} images\n"
-                f"  Test: {stats.test_images} images\n\n"
-                f"Object Status:\n"
-                f"  Accepted: {stats.accepted_objects}\n"
-                f"  Rejected: {stats.rejected_objects}\n"
-                f"  Pending: {stats.pending_objects}\n\n"
-                f"Formats: {', '.join(stats.formats_exported)}\n\n"
-                f"Output:\n"
-                f"  {stats.output_dir}/\n"
-            )
-            
-            QMessageBox.information(self, "Export Complete", msg)
-            self.statusBar().showMessage(f"Exported to {stats.output_dir}")
-            
-        except Exception as e:
+
+        self._set_controls_enabled(True)
+        self.export_worker = None
+
+        self.action_logger.relocate_output_dir(Path(stats.output_dir) / "logs")
+        self.action_logger.log_export(
+            format=", ".join(stats.formats_exported),
+            output_path=str(stats.output_dir),
+            num_frames=stats.total_frames,
+            num_objects=context.get("num_objects", 0),
+        )
+
+        frame_step = context.get("frame_step", 1)
+        labels = context.get("labels", [])
+        interval_info = f"(every {frame_step} frames)" if frame_step > 1 else "(all frames)"
+        labels_str = ", ".join(labels)
+        msg = (
+            f"Export Complete!\n\n"
+            f"Total Frames: {stats.total_frames} {interval_info}\n"
+            f"Total Annotations: {stats.total_annotations}\n"
+            f"Labels: {labels_str}\n\n"
+            f"Dataset Split (COCO/Parquet):\n"
+            f"  Train: {stats.train_images} images\n"
+            f"  Val: {stats.val_images} images\n"
+            f"  Test: {stats.test_images} images\n\n"
+            f"Object Status:\n"
+            f"  Accepted: {stats.accepted_objects}\n"
+            f"  Rejected: {stats.rejected_objects}\n"
+            f"  Pending: {stats.pending_objects}\n\n"
+            f"Formats: {', '.join(stats.formats_exported)}\n\n"
+            f"Output:\n"
+            f"  {stats.output_dir}/\n"
+        )
+
+        self._pending_export_context = {}
+        self._detached_message_box(
+            QMessageBox.Icon.Information,
+            "Export Complete",
+            msg,
+        )
+        self.statusBar().showMessage(f"Exported to {stats.output_dir}")
+
+    def _on_export_error(self, error_msg: str):
+        context = getattr(self, "_pending_export_context", {})
+        progress = context.get("progress")
+        if progress is not None:
             progress.close()
-            logger.error(f"Export error: {e}")
-            import traceback
-            traceback.print_exc()
-            QMessageBox.critical(self, "Export Error", f"Failed to export:\n{e}")
-    
+
+        self._pending_export_context = {}
+        self._set_controls_enabled(True)
+        self.export_worker = None
+        logger.error(f"Export error: {error_msg}")
+        self._detached_message_box(
+            QMessageBox.Icon.Critical,
+            "Export Error",
+            f"Failed to export:\n{error_msg}",
+        )
+
     def show_about(self):
-        """顯示關於對話框。"""
-        QMessageBox.about(
-            self,
+        """Show About dialog."""
+        self._detached_message_box(
+            QMessageBox.Icon.Information,
             "About STAMP",
             "STAMP Annotation Tool\n\n"
             "for Video using SAM3\n\n"
             "Author: Adam Shih (scy.en13@gmail.com)\n"
-            "Assistive Robotics Group, NYCU"
+            "Assistive Robotics Group, NYCU",
         )
-    
-    # =========================================================================
-    # 事件處理
-    # =========================================================================
-    
+
     def keyPressEvent(self, event):
         """鍵盤事件處理。"""
         key = event.key()
@@ -4070,7 +4330,11 @@ class STAMPMainWindow(QMainWindow):
                     f"({metrics.total_seconds:.1f}s total)\n\n"
                     f"Log saved to: {logs_path}/"
                 )
-                QMessageBox.information(self, "Session Summary", msg)
+                self._detached_message_box(
+                    QMessageBox.Icon.Information,
+                    "Session Summary",
+                    msg,
+                )
         
         if self.video_loader:
             self.video_loader.release()
@@ -4091,7 +4355,7 @@ class STAMPMainWindow(QMainWindow):
         """開始對選中的物件進行 refinement。"""
         selected_items = self.object_list.selectedItems()
         if not selected_items:
-            QMessageBox.warning(self, "Warning", "Please select an object to refine")
+            self._detached_message_box(QMessageBox.Icon.Warning, "Warning", "Please select an object to refine")
             return
         
         # 取得選中物件的 ID
@@ -4111,7 +4375,7 @@ class STAMPMainWindow(QMainWindow):
         # 取得該物件在當前幀的 mask
         frame_result = self.sam3_results.get(target_frame)
         if not frame_result:
-            QMessageBox.warning(self, "Warning", "No detection result for current frame")
+            self._detached_message_box(QMessageBox.Icon.Warning, "Warning", "No detection result for current frame")
             return
         
         # 找到對應的 detection
@@ -4122,7 +4386,7 @@ class STAMPMainWindow(QMainWindow):
                 break
         
         if target_det is None:
-            QMessageBox.warning(self, "Warning", f"Object {obj_id} not found in current frame")
+            self._detached_message_box(QMessageBox.Icon.Warning, "Warning", f"Object {obj_id} not found in current frame")
             return
         
         # 停止播放（先停止，避免播放時改變 current_frame）
@@ -4159,7 +4423,7 @@ class STAMPMainWindow(QMainWindow):
     def start_add_object(self):
         """開始手動新增物件模式。"""
         if self.video_loader is None:
-            QMessageBox.warning(self, "Warning", "Please open a video first")
+            self._detached_message_box(QMessageBox.Icon.Warning, "Warning", "Please open a video first")
             return
         
         # 記住當前幀位置
@@ -4168,7 +4432,7 @@ class STAMPMainWindow(QMainWindow):
         # 取得當前幀圖像大小
         frame = self.video_loader.get_frame(target_frame)
         if frame is None:
-            QMessageBox.warning(self, "Warning", "Cannot get current frame")
+            self._detached_message_box(QMessageBox.Icon.Warning, "Warning", "Cannot get current frame")
             return
         
         h, w = frame.shape[:2]
@@ -4394,7 +4658,7 @@ class STAMPMainWindow(QMainWindow):
         
         # 檢查 mask 是否有效
         if new_mask is None or not np.any(new_mask):
-            QMessageBox.warning(self, "Warning", "No valid mask to apply. Please add points first.")
+            self._detached_message_box(QMessageBox.Icon.Warning, "Warning", "No valid mask to apply. Please add points first.")
             return
         
         edited_frame = self.current_frame
@@ -4483,7 +4747,7 @@ class STAMPMainWindow(QMainWindow):
         # 計算 bounding box
         ys, xs = np.where(mask)
         if len(xs) == 0 or len(ys) == 0:
-            QMessageBox.warning(self, "Warning", "Empty mask, cannot add object.")
+            self._detached_message_box(QMessageBox.Icon.Warning, "Warning", "Empty mask, cannot add object.")
             return None
         
         x_min, x_max = xs.min(), xs.max()
@@ -4529,11 +4793,11 @@ class STAMPMainWindow(QMainWindow):
         
         # 檢查是否有有效的 mask 和 points
         if new_mask is None or not np.any(new_mask):
-            QMessageBox.warning(self, "Warning", "No valid mask to propagate. Please add points first.")
+            self._detached_message_box(QMessageBox.Icon.Warning, "Warning", "No valid mask to propagate. Please add points first.")
             return
         
         if len(points) == 0:
-            QMessageBox.warning(self, "Warning", "No points added. Please click to define the object.")
+            self._detached_message_box(QMessageBox.Icon.Warning, "Warning", "No points added. Please click to define the object.")
             return
         
         # 確認操作
@@ -4541,11 +4805,12 @@ class STAMPMainWindow(QMainWindow):
         remaining_frames = total_frames - self.current_frame - 1
         
         if remaining_frames <= 0:
-            QMessageBox.information(self, "Info", "This is the last frame. Use 'Apply' instead.")
+            self._detached_message_box(QMessageBox.Icon.Information, "Info", "This is the last frame. Use 'Apply' instead.")
             return
         
-        reply = QMessageBox.question(
-            self, "Confirm Propagation",
+        reply = self._detached_message_box(
+            QMessageBox.Icon.Question,
+            "Confirm Propagation",
             f"This will track the object from frame {self.current_frame + 1} to frame {total_frames} "
             f"({remaining_frames} frames).\n\n"
             f"This may take a while. Continue?",
@@ -4578,12 +4843,13 @@ class STAMPMainWindow(QMainWindow):
         total_frames = self.video_loader.metadata.total_frames
         remaining = total_frames - start_frame
         
-        progress = QProgressDialog(
+        progress = self._make_detached_progress_dialog(
             f"Propagating object {obj_id} to following frames...",
-            "Cancel", 0, remaining, self
+            "Cancel",
+            0,
+            remaining,
+            "Propagating",
         )
-        progress.setWindowModality(Qt.WindowModality.WindowModal)
-        progress.setMinimumDuration(0)
         progress.setValue(0)
         add_object_logged = False
         
@@ -4670,9 +4936,10 @@ class STAMPMainWindow(QMainWindow):
         except Exception as e:
             progress.close()
             logger.error(f"Propagation error: {e}")
-            QMessageBox.warning(
-                self, "Propagation Error",
-                f"Failed to propagate: {e}\n\nFalling back to simple copy."
+            self._detached_message_box(
+                QMessageBox.Icon.Warning,
+                "Propagation Error",
+                f"Failed to propagate: {e}\n\nFalling back to simple copy.",
             )
             # Fallback
             self._simple_propagate(obj_id, mask, start_frame, None)
@@ -4767,6 +5034,7 @@ class STAMPMainWindow(QMainWindow):
         self.play_btn.setEnabled(enabled and self.video_loader is not None)
         self.timeline_slider.setEnabled(enabled and self.video_loader is not None)
         self.detect_btn.setEnabled(enabled and self.video_loader is not None)
+        self.export_btn.setEnabled(enabled and len(self.sam3_results) > 0)
         self.accept_all_btn.setEnabled(enabled and len(self.sam3_results) > 0)
         self.reset_all_btn.setEnabled(enabled and len(self.sam3_results) > 0)
         self.refine_btn.setEnabled(enabled and len(self.object_list.selectedItems()) > 0)
