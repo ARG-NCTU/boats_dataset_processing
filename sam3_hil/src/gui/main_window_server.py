@@ -577,6 +577,13 @@ class ObjectSelectionDialog(QDialog):
             QDialogButtonBox.StandardButton.Ok | 
             QDialogButtonBox.StandardButton.Cancel
         )
+        # 關掉 OK/Cancel 的 default,避免 QLineEdit 按 Enter 連帶觸發 accept()
+        ok_button = button_box.button(QDialogButtonBox.StandardButton.Ok)
+        ok_button.setAutoDefault(False)
+        ok_button.setDefault(False)
+        cancel_button = button_box.button(QDialogButtonBox.StandardButton.Cancel)
+        cancel_button.setAutoDefault(False)
+        cancel_button.setDefault(False)
         button_box.accepted.connect(self.accept)
         button_box.rejected.connect(self.reject)
         layout.addWidget(button_box)
@@ -692,6 +699,25 @@ class ObjectListItem(QWidget):
         self.accept_btn.setEnabled(True)
         self.reject_btn.setEnabled(False)
         self.status_changed.emit(self.obj_id, "rejected", self.frame_idx)  # 傳遞 frame_idx
+
+    def apply_status(self, status: str):
+        """依外部狀態還原 widget 外觀，不發出 status_changed signal。"""
+        self.status = status
+        if status == "accepted":
+            self.status_label.setText("✓")
+            self.status_label.setToolTip("accepted")
+            self.accept_btn.setEnabled(False)
+            self.reject_btn.setEnabled(True)
+        elif status == "rejected":
+            self.status_label.setText("✗")
+            self.status_label.setToolTip("rejected")
+            self.accept_btn.setEnabled(True)
+            self.reject_btn.setEnabled(False)
+        else:  # pending
+            self.status_label.setText("?")
+            self.status_label.setToolTip("pending review")
+            self.accept_btn.setEnabled(True)
+            self.reject_btn.setEnabled(True)
     
     def reset(self):
         """重設狀態。"""
@@ -779,6 +805,8 @@ class ExportDialog(QDialog):
         dir_layout.addWidget(self.dir_input)
         
         browse_btn = QPushButton("Browse...")
+        browse_btn.setAutoDefault(False)
+        browse_btn.setDefault(False)
         browse_btn.clicked.connect(self.browse_directory)
         dir_layout.addWidget(browse_btn)
         
@@ -820,7 +848,6 @@ class ExportDialog(QDialog):
         
         self.new_label_input = QLineEdit()
         self.new_label_input.setPlaceholderText("Enter new label name...")
-        self.new_label_input.returnPressed.connect(self.add_label)
         add_label_layout.addWidget(self.new_label_input)
         
         add_label_btn = QPushButton("+ Add Label")
@@ -947,7 +974,7 @@ class ExportDialog(QDialog):
         
         left_panel_layout.addWidget(interval_group)
         left_panel_layout.addStretch()
-        layout.addWidget(content_layout)
+        layout.addLayout(content_layout)
         
         # =====================================================================
         # Export Formats
@@ -1039,6 +1066,25 @@ class ExportDialog(QDialog):
         button_box.accepted.connect(self.accept)
         button_box.rejected.connect(self.reject)
         layout.addWidget(button_box)
+        # 關閉 dialog 內所有按鈕的 default/autoDefault，避免 Enter 誤觸 Browse/OK
+        from PyQt6.QtWidgets import QPushButton as _QPushButton
+        for btn in self.findChildren(_QPushButton):
+            btn.setAutoDefault(False)
+            btn.setDefault(False)
+
+    def keyPressEvent(self, event):
+        """攔截 Enter/Return：在 export dialog 裡不讓 Enter 觸發 OK(accept)。
+
+        若焦點在新增 label 的輸入框，Enter 改為新增 label；
+        其餘情況直接忽略 Enter，避免誤關視窗。
+        """
+        from PyQt6.QtCore import Qt as _Qt
+        if event.key() in (_Qt.Key.Key_Return, _Qt.Key.Key_Enter):
+            if self.new_label_input.hasFocus():
+                self.add_label()
+            # 不呼叫 super()，等於吞掉 Enter，OK 不會被觸發
+            return
+        super().keyPressEvent(event)
 
     def _detached_warning(self, title: str, text: str):
         message = QMessageBox()
@@ -3710,6 +3756,10 @@ class STAMPMainWindow(QMainWindow):
             # 初始化狀態（如果尚未設定）
             if obj_summary.obj_id not in self.object_status:
                 self.object_status[obj_summary.obj_id] = "pending"
+            
+            saved_status = self.object_status.get(obj_summary.obj_id, "pending")
+            item_widget.apply_status(saved_status)
+            item_widget.status_changed.connect(self.on_object_status_changed)
     
     def _update_object_list_independent(self):
         """Independent 模式：只顯示當前幀的物件。"""
@@ -3737,19 +3787,26 @@ class STAMPMainWindow(QMainWindow):
                 category,
                 frame_idx=self.current_frame
             )
-            item_widget.status_changed.connect(self.on_object_status_changed)
             
             item_widget.setProperty("obj_id", det.obj_id)
             item.setData(Qt.ItemDataRole.UserRole, det.obj_id)
             item_widget.setProperty("frame_idx", self.current_frame)
             item_widget.setProperty("composite_key", composite_key)
             
+            # 初始化狀態（如果尚未設定）
+            if composite_key not in self.object_status:
+                self.object_status[composite_key] = "pending"
+            
+            # 依既有狀態還原 widget 外觀（避免重建後變回 pending）
+            saved_status = self.object_status.get(composite_key, "pending")
+            item_widget.apply_status(saved_status)
+            
+            # 還原狀態後才接 signal，避免 apply_status 觸發 status_changed
+            item_widget.status_changed.connect(self.on_object_status_changed)
+            
             item.setSizeHint(item_widget.sizeHint())
             self.object_list.addItem(item)
             self.object_list.setItemWidget(item, item_widget)
-            
-            if composite_key not in self.object_status:
-                self.object_status[composite_key] = "pending"
     
     def update_analysis_display(self):
         """更新分析結果顯示。"""
@@ -4058,13 +4115,30 @@ class STAMPMainWindow(QMainWindow):
             default_name = Path(self.video_loader.video_path).stem
             video_path_for_export = getattr(self, '_original_video_path', str(self.video_loader.video_path))
 
+        def resolve_status(obj_id):
+            """彙總某 obj_id 的狀態。image mode 看所有 frame 的 composite key。"""
+            if is_independent_mode:
+                statuses = [
+                    s for k, s in self.object_status.items()
+                    if isinstance(k, str) and k.rsplit("_", 1)[-1] == str(obj_id)
+                ]
+                if not statuses:
+                    return "pending"
+                if any(s == "accepted" for s in statuses):
+                    return "accepted"
+                if all(s == "rejected" for s in statuses):
+                    return "rejected"
+                return "pending"
+            else:
+                return self.object_status.get(obj_id, "pending")
+
         object_info = []
         if self.video_analysis and self.video_analysis.object_summaries:
             for obj_id, summary in self.video_analysis.object_summaries.items():
                 object_info.append({
                     'obj_id': obj_id,
                     'avg_score': summary.avg_score,
-                    'status': self.object_status.get(obj_id, 'pending'),
+                    'status': resolve_status(obj_id),
                 })
         else:
             all_obj_ids = set()
@@ -4079,7 +4153,7 @@ class STAMPMainWindow(QMainWindow):
                 object_info.append({
                     'obj_id': obj_id,
                     'avg_score': sum(scores) / len(scores),
-                    'status': self.object_status.get(obj_id, 'pending'),
+                    'status': resolve_status(obj_id),
                 })
 
         dialog = ExportDialog(
@@ -4166,6 +4240,7 @@ class STAMPMainWindow(QMainWindow):
         self.export_worker.progress.connect(self._on_export_progress)
         self.export_worker.export_finished.connect(self._on_export_finished)
         self.export_worker.export_error.connect(self._on_export_error)
+        self.export_worker.finished.connect(self.export_worker.deleteLater)
         self.export_worker.start()
 
     def _on_export_progress(self, percent: int, message: str):
@@ -4182,6 +4257,9 @@ class STAMPMainWindow(QMainWindow):
             progress.close()
 
         self._set_controls_enabled(True)
+        if self.export_worker is not None:
+            self.export_worker.wait()
+            self.export_worker.deleteLater()
         self.export_worker = None
 
         self.action_logger.relocate_output_dir(Path(stats.output_dir) / "logs")
@@ -4230,6 +4308,9 @@ class STAMPMainWindow(QMainWindow):
 
         self._pending_export_context = {}
         self._set_controls_enabled(True)
+        if self.export_worker is not None:
+            self.export_worker.wait()
+            self.export_worker.deleteLater()
         self.export_worker = None
         logger.error(f"Export error: {error_msg}")
         self._detached_message_box(
@@ -4303,7 +4384,18 @@ class STAMPMainWindow(QMainWindow):
                 self.worker.terminate()
                 self.worker.wait(500)
             self.worker = None
-        
+
+        # 如果有正在運行的 export worker，等它結束
+        if hasattr(self, 'export_worker') and self.export_worker is not None:
+            logger.info("closeEvent: Waiting for export worker...")
+            if self.export_worker.isRunning():
+                self.export_worker.wait(5000)  # export 通常會很快完成，給多一點時間
+                if self.export_worker.isRunning():
+                    logger.warning("closeEvent: Export worker still running, terminating...")
+                    self.export_worker.terminate()
+                    self.export_worker.wait(1000)
+            self.export_worker = None
+
         # 關閉 progress dialog（如果有）
         if hasattr(self, 'progress_dialog') and self.progress_dialog:
             self.progress_dialog.close()
