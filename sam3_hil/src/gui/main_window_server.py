@@ -64,7 +64,7 @@ from PyQt6.QtWidgets import (
     QMenu,
     QInputDialog,
 )
-from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QThread, QSize, QPoint
+from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QThread, QSize, QPoint, QEventLoop
 from PyQt6.QtGui import QImage, QPixmap, QAction, QKeySequence, QColor, QFont
 
 # 加入專案路徑
@@ -1338,14 +1338,29 @@ class STAMPMainWindow(QMainWindow):
 
     def _prepare_detached_dialog(self, dialog: QDialog) -> QDialog:
         """Make a dialog a movable top-level window without grabbing global input."""
-        dialog.setParent(self)
+        dialog.setParent(None)
         dialog.setWindowFlag(Qt.WindowType.Window, True)
-        dialog.setWindowModality(Qt.WindowModality.WindowModal)
+        dialog.setWindowModality(Qt.WindowModality.NonModal)
         dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, False)
         return dialog
 
     def _exec_detached_dialog(self, dialog: QDialog) -> int:
-        return self._prepare_detached_dialog(dialog).exec()
+        dialog = self._prepare_detached_dialog(dialog)
+        loop = QEventLoop()
+        dialog.finished.connect(loop.quit)
+
+        was_enabled = self.isEnabled()
+        self.setEnabled(False)
+        try:
+            dialog.show()
+            loop.exec()
+            return dialog.result()
+        finally:
+            self.setEnabled(was_enabled)
+            try:
+                dialog.finished.disconnect(loop.quit)
+            except TypeError:
+                pass
 
     def _make_detached_progress_dialog(
         self,
