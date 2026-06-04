@@ -1337,8 +1337,9 @@ class STAMPMainWindow(QMainWindow):
         self.statusBar().showMessage("Ready - Please open a video file")
 
     def _prepare_detached_dialog(self, dialog: QDialog) -> QDialog:
-        """Make a dialog movable independently while blocking only the main window."""
-        dialog.setParent(self, Qt.WindowType.Dialog)
+        """Make a dialog a movable top-level window without grabbing global input."""
+        dialog.setParent(self)
+        dialog.setWindowFlag(Qt.WindowType.Window, True)
         dialog.setWindowModality(Qt.WindowModality.WindowModal)
         dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, False)
         return dialog
