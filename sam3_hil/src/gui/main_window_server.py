@@ -1087,14 +1087,13 @@ class ExportDialog(QDialog):
         super().keyPressEvent(event)
 
     def _detached_warning(self, title: str, text: str):
-        message = QMessageBox()
+        message = QMessageBox(self)
         message.setIcon(QMessageBox.Icon.Warning)
         message.setWindowTitle(title)
         message.setText(text)
         message.setStandardButtons(QMessageBox.StandardButton.Ok)
         message.setDefaultButton(QMessageBox.StandardButton.Ok)
-        message.setWindowModality(Qt.WindowModality.ApplicationModal)
-        message.setWindowFlag(Qt.WindowType.Window, True)
+        message.setWindowModality(Qt.WindowModality.WindowModal)
         message.exec()
 
     def add_label(self):
@@ -1338,10 +1337,9 @@ class STAMPMainWindow(QMainWindow):
         self.statusBar().showMessage("Ready - Please open a video file")
 
     def _prepare_detached_dialog(self, dialog: QDialog) -> QDialog:
-        """Make a dialog movable independently while keeping the workflow modal."""
-        dialog.setParent(None)
-        dialog.setWindowModality(Qt.WindowModality.ApplicationModal)
-        dialog.setWindowFlag(Qt.WindowType.Window, True)
+        """Make a dialog movable independently while blocking only the main window."""
+        dialog.setParent(self, Qt.WindowType.Dialog)
+        dialog.setWindowModality(Qt.WindowModality.WindowModal)
         dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, False)
         return dialog
 
@@ -4157,7 +4155,7 @@ class STAMPMainWindow(QMainWindow):
                 })
 
         dialog = ExportDialog(
-            None,
+            self,
             default_name=default_name,
             video_fps=video_fps,
             object_info=object_info,
