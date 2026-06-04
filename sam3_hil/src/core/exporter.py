@@ -156,6 +156,28 @@ class ExportStats:
     output_dir: str = ""
 
 
+def _resolve_detection_status(object_status: Dict[Any, str], frame_idx: int, obj_id: int) -> str:
+    """Resolve review status with image-mode composite key support."""
+    composite_key = f"F{frame_idx}_{obj_id}"
+    return object_status.get(composite_key, object_status.get(obj_id, "pending"))
+
+
+def _count_exportable_detections(
+    results: Dict[int, FrameResult],
+    object_status: Dict[Any, str],
+    include_rejected: bool,
+) -> int:
+    """Count detections that would be exported without building COCO data."""
+    count = 0
+    for frame_idx, frame_result in results.items():
+        for det in frame_result.detections:
+            status = _resolve_detection_status(object_status, frame_idx, det.obj_id)
+            if status == "rejected" and not include_rejected:
+                continue
+            count += 1
+    return count
+
+
 # =============================================================================
 # Mask Utilities
 # =============================================================================
@@ -470,7 +492,7 @@ class LabelmeExporter:
             # Build shapes for this frame
             shapes = []
             for det in frame_result.detections:
-                status = object_status.get(det.obj_id, "pending")
+                status = _resolve_detection_status(object_status, frame_idx, det.obj_id)
                 if status == "rejected" and not self.config.include_rejected:
                     continue
 
@@ -575,7 +597,7 @@ class COCOExporter:
             })
 
             for det in frame_result.detections:
-                status = object_status.get(det.obj_id, "pending")
+                status = _resolve_detection_status(object_status, frame_idx, det.obj_id)
                 if status == "rejected" and not self.config.include_rejected:
                     continue
 
@@ -850,27 +872,36 @@ class AnnotationExporter:
             exported_formats.append("labelme")
         self._emit_progress(progress_callback, 40, "Labelme export complete...")
 
-        # Step 3: Build COCO data
-        logger.info("Step 3: Building COCO annotations...")
-        coco_exporter = COCOExporter(self.config)
-        coco_data = coco_exporter.export(
-            filtered_results,
-            object_status,
-            frame_to_filename,
-            object_category_ids=object_category_ids  # Pass category IDs
-        )
-        self._emit_progress(progress_callback, 60, "COCO annotations built...")
+        needs_coco_data = "coco" in formats or "parquet" in formats
+        coco_data = None
 
-        # Step 4: Split dataset (for COCO and Parquet)
-        logger.info("Step 4: Splitting dataset into train/val/test...")
-        train_data, val_data, test_data = split_dataset(
-            coco_data,
-            train_ratio=self.config.train_ratio,
-            val_ratio=self.config.val_ratio,
-            test_ratio=self.config.test_ratio,
-            random_seed=self.config.random_seed
-        )
-        self._emit_progress(progress_callback, 70, "Dataset split complete...")
+        if needs_coco_data:
+            # Step 3: Build COCO data
+            logger.info("Step 3: Building COCO annotations...")
+            coco_exporter = COCOExporter(self.config)
+            coco_data = coco_exporter.export(
+                filtered_results,
+                object_status,
+                frame_to_filename,
+                object_category_ids=object_category_ids  # Pass category IDs
+            )
+            self._emit_progress(progress_callback, 60, "COCO annotations built...")
+
+            # Step 4: Split dataset (for COCO and Parquet)
+            logger.info("Step 4: Splitting dataset into train/val/test...")
+            train_data, val_data, test_data = split_dataset(
+                coco_data,
+                train_ratio=self.config.train_ratio,
+                val_ratio=self.config.val_ratio,
+                test_ratio=self.config.test_ratio,
+                random_seed=self.config.random_seed
+            )
+            self._emit_progress(progress_callback, 70, "Dataset split complete...")
+        if not needs_coco_data:
+            empty_split = {"images": [], "annotations": [], "categories": self.config.categories or []}
+            train_data = val_data = test_data = empty_split
+            self._emit_progress(progress_callback, 60, "COCO export skipped...")
+            self._emit_progress(progress_callback, 70, "Dataset split skipped...")
 
         # Step 5: Save COCO JSON files with split images
         if "coco" in formats:
@@ -905,8 +936,7 @@ class AnnotationExporter:
             hf_exporter = HuggingFaceExporter(self.config)
 
             for split_name, split_data in [("train", train_data), ("val", val_data), ("test", test_data)]:
-                # Use coco split images
-                split_image_dir = coco_dir / f"{split_name}2024"
+                split_image_dir = coco_dir / f"{split_name}2024" if "coco" in formats else json_image_dir
                 if not split_image_dir.exists():
                     split_image_dir = json_image_dir
 
@@ -920,7 +950,14 @@ class AnnotationExporter:
         self._emit_progress(progress_callback, 95, "Parquet export complete...")
 
         # Calculate stats
-        total_annotations = len(coco_data["annotations"])
+        if coco_data is not None:
+            total_annotations = len(coco_data["annotations"])
+        else:
+            total_annotations = _count_exportable_detections(
+                filtered_results,
+                object_status,
+                self.config.include_rejected,
+            )
         status_counts = {"accepted": 0, "rejected": 0, "pending": 0}
         for status in object_status.values():
             if status in status_counts:
