@@ -4432,7 +4432,8 @@ class STAMPMainWindow(QMainWindow):
                     f"CPO: {metrics.cpo:.2f} clicks/object "
                     f"({metrics.total_clicks} clicks, {metrics.total_objects} objects)\n"
                     f"SPF: {metrics.spf:.2f} seconds/frame "
-                    f"({metrics.total_seconds:.1f}s total)\n\n"
+                    f"({metrics.total_seconds:.1f}s total; "
+                    f"{metrics.edit_seconds:.1f}s edit + {metrics.export_seconds:.1f}s export)\n\n"
                     f"Log saved to: {logs_path}/"
                 )
                 self._detached_message_box(

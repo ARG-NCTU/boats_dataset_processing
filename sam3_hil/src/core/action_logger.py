@@ -38,6 +38,7 @@ class ActionType(Enum):
     # Session 操作
     SESSION_START = "session_start"
     SESSION_END = "session_end"
+    ANNOTATION_COMPLETE = "annotation_complete"
 
     # 影片操作
     VIDEO_LOADED = "video_loaded"
@@ -141,7 +142,8 @@ class SessionInfo:
     fps: float = 0.0
     prompt: str = ""
     start_time: float = field(default_factory=time.time)
-    end_time: Optional[float] = None
+    end_time: Optional[float] = None           # edit 結束點（按 Export 凍結，annotation complete）
+    session_end_time: Optional[float] = None   # session 真正結束點（closeEvent 關閉 STAMP）
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -177,8 +179,10 @@ class EfficiencyMetrics:
     total_objects: int = 0
 
     # Time metrics
-    spf: float = 0.0                 # SPF: seconds per frame
-    total_seconds: float = 0.0
+    spf: float = 0.0                 # SPF: seconds per frame（以 edit_seconds 計算）
+    edit_seconds: float = 0.0        # 標註時間（session start → 按 Export）
+    export_seconds: float = 0.0      # export 時間（按 Export → 關閉 STAMP）
+    total_seconds: float = 0.0       # = edit_seconds + export_seconds
 
     # Detailed breakdown
     action_counts: Dict[str, int] = field(default_factory=dict)
@@ -226,7 +230,8 @@ class EfficiencyMetrics:
             f"EOR: {self.eor:.4f} edits/frame\n"
             f"FCR: {self.fcr:.1f}% ({self.edited_frame_count}/{self.total_frames} frames touched)\n"
             f"CPO: {self.cpo:.2f} clicks/object ({self.total_clicks} clicks, {self.total_objects} objects)\n"
-            f"SPF: {self.spf:.2f} seconds/frame ({self.total_seconds:.1f}s total)"
+            f"SPF: {self.spf:.2f} seconds/frame "
+            f"({self.total_seconds:.1f}s total; {self.edit_seconds:.1f}s edit + {self.export_seconds:.1f}s export)"
             f"{hotspots}\n"
             f"Action Counts: {self.action_counts}"
         )
@@ -400,9 +405,12 @@ class ActionLogger:
         if self.session is None:
             return None
 
-        # 記錄結束時間
+        # 記錄 session 真正結束時間（關閉 STAMP）
+        now = time.time()
+        self.session.session_end_time = now
+        # 若使用者從未成功 export，edit 結束點 = 關閉時間（全部時間算 edit）
         if self.session.end_time is None:
-            self.session.end_time = time.time()
+            self.session.end_time = now
 
         # 記錄 session 結束
         self._log_action(ActionRecord(
@@ -434,6 +442,12 @@ class ActionLogger:
             return None
 
         self.session.end_time = completed_at if completed_at is not None else time.time()
+        # 寫一筆 annotation_complete，供事後 jsonl 分析切分 edit/export
+        # 若之後 cancel 再重新 export，會再寫一筆，analyzer 取最後一筆即可
+        self._log_action(ActionRecord(
+            action_type=ActionType.ANNOTATION_COMPLETE.value,
+            timestamp=self.session.end_time,
+        ))
         return self.session.end_time
 
     def clear_annotation_complete(self):
@@ -783,12 +797,18 @@ class ActionLogger:
         total_objects = len(self._clicked_objects)
         cpo = (total_clicks / total_objects) if total_objects > 0 else 0
 
-        # 計算 SPF
+        # 計算時間指標：edit / export / total
         if self.session and self.session.end_time:
-            total_seconds = self.session.end_time - self.session.start_time
+            edit_seconds = self.session.end_time - self.session.start_time
         else:
-            total_seconds = 0
-        spf = (total_seconds / total_frames) if total_frames > 0 else 0
+            edit_seconds = 0
+        if self.session and self.session.session_end_time and self.session.end_time:
+            export_seconds = max(0.0, self.session.session_end_time - self.session.end_time)
+        else:
+            export_seconds = 0
+        total_seconds = edit_seconds + export_seconds
+        # SPF 只以標註時間計算，不含 export
+        spf = (edit_seconds / total_frames) if total_frames > 0 else 0
 
         return EfficiencyMetrics(
             total_edit_operations=self._total_edit_operations,
@@ -800,6 +820,8 @@ class ActionLogger:
             total_clicks=total_clicks,
             total_objects=total_objects,
             spf=spf,
+            edit_seconds=edit_seconds,
+            export_seconds=export_seconds,
             total_seconds=total_seconds,
             action_counts=action_counts,
             frame_edit_counts=self._frame_edit_counts.copy(),
@@ -1012,6 +1034,7 @@ class SessionAnalyzer:
 
         session_start_time: Optional[float] = None
         session_end_time: Optional[float] = None
+        annotation_complete_time: Optional[float] = None
 
         for action in actions:
             action_type = action.action_type
@@ -1022,6 +1045,9 @@ class SessionAnalyzer:
                 session_start_time = action.timestamp
             elif action_type == ActionType.SESSION_END.value:
                 session_end_time = action.timestamp
+            elif action_type == ActionType.ANNOTATION_COMPLETE.value:
+                # 取最後一筆（涵蓋 cancel 後重新 export 的情況）
+                annotation_complete_time = action.timestamp
 
             # 點擊統計
             if action_type in [ActionType.POSITIVE_CLICK.value, ActionType.NEGATIVE_CLICK.value]:
@@ -1051,11 +1077,22 @@ class SessionAnalyzer:
         total_objects = len(clicked_objects)
         cpo = (total_clicks / total_objects) if total_objects > 0 else 0
 
-        if session_start_time and session_end_time:
-            total_seconds = session_end_time - session_start_time
+        # 切分 edit / export / total，與即時 summary 一致
+        if session_start_time and annotation_complete_time:
+            edit_seconds = annotation_complete_time - session_start_time
+        elif session_start_time and session_end_time:
+            # fallback：舊 log 沒有 annotation_complete，全部算 edit
+            edit_seconds = session_end_time - session_start_time
         else:
-            total_seconds = 0
-        spf = (total_seconds / total_frames) if total_frames > 0 else 0
+            edit_seconds = 0
+
+        if annotation_complete_time and session_end_time:
+            export_seconds = max(0.0, session_end_time - annotation_complete_time)
+        else:
+            export_seconds = 0
+
+        total_seconds = edit_seconds + export_seconds
+        spf = (edit_seconds / total_frames) if total_frames > 0 else 0
 
         return EfficiencyMetrics(
             total_edit_operations=total_edit_operations,
@@ -1067,6 +1104,8 @@ class SessionAnalyzer:
             total_clicks=total_clicks,
             total_objects=total_objects,
             spf=spf,
+            edit_seconds=edit_seconds,
+            export_seconds=export_seconds,
             total_seconds=total_seconds,
             action_counts=action_counts,
             frame_edit_counts=frame_edit_counts,
