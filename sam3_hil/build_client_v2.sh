@@ -81,6 +81,7 @@ case "${1:-build}" in
         [ -f "$SPEC_FILE" ] || error "$SPEC_FILE not found"
         [ -f "configs/config.py" ] || error "configs/config.py not found"
         [ -d "src" ] || error "src/ directory not found"
+        [ -f "src/core/refinement_utils.py" ] || error "src/core/refinement_utils.py not found"
         [ -f "src/gui/export_paths.py" ] || error "src/gui/export_paths.py not found"
         [ -f "src/gui/canvas_viewport.py" ] || error "src/gui/canvas_viewport.py not found"
 

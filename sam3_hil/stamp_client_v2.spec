@@ -93,6 +93,7 @@ CLIENT_HIDDEN_IMPORTS = [
     "src.core.exporter",
     "src.core.jitter_detector",
     "src.core.maritime_roi",
+    "src.core.refinement_utils",
     "src.core.video_loader",
     "src.utils",
 
@@ -112,6 +113,7 @@ CLIENT_HIDDEN_IMPORTS = [
     "core.exporter",
     "core.jitter_detector",
     "core.maritime_roi",
+    "core.refinement_utils",
     "core.video_loader",
 ]
 
