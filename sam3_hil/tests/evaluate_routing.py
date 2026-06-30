@@ -2,40 +2,31 @@
 # -*- coding: utf-8 -*-
 """實驗三：Presence Score 路由有效性分析（calibration）。
 
-對「STAMP 純自動匯出」與 GT 做逐偵測比對，產生 calibration 所需的
-(presence_score, IoU vs GT) 配對，並輸出：
+對「STAMP 純自動匯出」與 GT 做逐偵測比對，產生 (presence_score, IoU vs GT)
+配對，輸出 calibration 所需的明細、分桶、總結與圖。
 
-  1. 逐偵測明細           exp3_detections.csv
-  2. 分位數 calibration   exp3_calibration_quantile.csv  （每桶 >= --min-per-bin）
-  3. 固定 10-bin（附錄）  exp3_calibration_fixed10.csv
-  4. 總結                  exp3_summary.json   （含 missed-GT/FN 率、FP、mean IoU）
-  5. （有 matplotlib 時）calibration 圖 exp3_calibration.png
+單位（--per-object）
+    預設：每個 (幀, 偵測) 一筆 (score, IoU)。
+    --per-object：每個 (影片, 象限, obj_id) 聚合成一筆——
+        score = 該物件跨幀平均（= STAMP 物件清單路由所用的 avg_score）
+        IoU   = 該物件跨幀平均 IoU
+    影片模式下 presence score 每物件一個，逐幀只是同分數重複；per-object 才是
+    「校準系統實際路由的分數」，且 CI 不會被相關幀灌水。
 
-設計重點
---------
-* 配對用「遮罩 IoU（幾何）」最佳指派（scipy linear_sum_assignment），
-  與論文「greedy IoU assignment, 0.5 threshold」一致，且不依賴 label 名稱：
-    - 融合塊  -> 自動配到最接近的 GT（=方法 A），另一艘算 missed。
-    - 誤判    -> 配不到任何 GT -> IoU=0（false positive）。
-  因此純自動匯出時不必特別處理 FP / 融合的命名。
-* IoU 計算重用 evaluate_video_gt.py 的函式，確保與實驗一定義相同。
+配對：遮罩 IoU 幾何最佳指派（與論文 greedy IoU 0.5 一致，不依賴 label 名稱）。
+    融合塊 -> 配最接近的 GT（方法 A），另一艘 missed；誤判 -> 配不到 -> IoU=0。
+IoU 計算重用 evaluate_video_gt.py 的函式，與實驗一定義相同。
 
-預設路徑（可用旗標覆蓋）
+路徑（可覆蓋）
     pred: <root>/tests/exp/exp3/Video<X>_Q<Y>/coco/annotations/instances_train2024.json
     GT  : <root>/tests/exp/GT/V<X>Q<Y>GT/annotations/instances_default.json
-  X = A..D, Y = 1..4。目前只有 GT 的組合會被納入，缺檔自動略過。
-
-用法
-    python tests/evaluate_routing.py                 # 跑所有找得到 GT 的組合
-    python tests/evaluate_routing.py --videos A B    # 只跑 A、B
-    python tests/evaluate_routing.py --dry-run       # 只列出會用到哪些檔
-    python tests/evaluate_routing.py --exclude-fp    # calibration 不納入 FP(IoU=0)
 """
 
 import argparse
 import csv
 import json
 import sys
+from collections import defaultdict
 from pathlib import Path
 from typing import Any, Optional
 
@@ -45,7 +36,6 @@ THIS_DIR = Path(__file__).resolve().parent
 ROOT = THIS_DIR.parent
 sys.path.insert(0, str(THIS_DIR))
 
-# 重用實驗一的 IoU / 遮罩函式，保證定義一致。
 from evaluate_video_gt import (  # noqa: E402
     _load_json,
     _parse_frame_index,
@@ -56,7 +46,7 @@ from evaluate_video_gt import (  # noqa: E402
 
 try:
     import cv2
-except ImportError:  # 只有在 GT/pred 解析度不同時才需要 resize
+except ImportError:
     cv2 = None
 
 try:
@@ -69,23 +59,17 @@ VIDEOS_DEFAULT = ["A", "B", "C", "D"]
 QUARTILES_DEFAULT = [1, 2, 3, 4]
 
 
-# ---------------------------------------------------------------------------
-# 路徑
-# ---------------------------------------------------------------------------
-def pred_path(exp3_dir: Path, video: str, quartile: int) -> Path:
+def pred_path(exp3_dir, video, quartile):
     return exp3_dir / f"Video{video}_Q{quartile}" / "coco" / "annotations" / "instances_train2024.json"
 
 
-def gt_path(gt_dir: Path, video: str, quartile: int) -> Path:
+def gt_path(gt_dir, video, quartile):
     return gt_dir / f"V{video}Q{quartile}GT" / "annotations" / "instances_default.json"
 
 
-# ---------------------------------------------------------------------------
-# 每幀資料
-# ---------------------------------------------------------------------------
-def gt_masks_by_frame(coco: dict[str, Any]) -> dict[int, list[np.ndarray]]:
+def gt_masks_by_frame(coco):
     images, anns_by_image = _image_maps(coco)
-    out: dict[int, list[np.ndarray]] = {}
+    out = {}
     for image_id, image in images.items():
         f = _parse_frame_index(image)
         w, h = int(image["width"]), int(image["height"])
@@ -94,10 +78,9 @@ def gt_masks_by_frame(coco: dict[str, Any]) -> dict[int, list[np.ndarray]]:
     return out
 
 
-def pred_items_by_frame(coco: dict[str, Any]) -> dict[int, list[tuple[np.ndarray, Optional[float]]]]:
-    """每幀回傳 [(mask, score), ...]；score 取自 annotation['score']。"""
+def pred_items_by_frame(coco):
     images, anns_by_image = _image_maps(coco)
-    out: dict[int, list[tuple[np.ndarray, Optional[float]]]] = {}
+    out = {}
     for image_id, image in images.items():
         f = _parse_frame_index(image)
         w, h = int(image["width"]), int(image["height"])
@@ -106,82 +89,81 @@ def pred_items_by_frame(coco: dict[str, Any]) -> dict[int, list[tuple[np.ndarray
             mask = _annotation_to_mask(a, w, h)
             score = a.get("score", None)
             score = float(score) if score not in (None, "") else None
-            lst.append((mask, score))
+            obj_id = a.get("obj_id", a.get("id", None))
+            lst.append((mask, score, obj_id))
     return out
 
 
-def _iou_any_shape(a: np.ndarray, b: np.ndarray) -> float:
+def _iou_any_shape(a, b):
     if a.shape != b.shape:
         if cv2 is None:
-            raise RuntimeError("GT 與 pred 解析度不同，需要 opencv 來對齊遮罩尺寸。")
-        b = cv2.resize(
-            b.astype(np.uint8), (a.shape[1], a.shape[0]), interpolation=cv2.INTER_NEAREST
-        ).astype(bool)
+            raise RuntimeError("GT 與 pred 解析度不同，需要 opencv 對齊遮罩尺寸。")
+        b = cv2.resize(b.astype(np.uint8), (a.shape[1], a.shape[0]),
+                       interpolation=cv2.INTER_NEAREST).astype(bool)
     return _mask_iou(a, b)
 
 
-def match_frame(
-    gt_masks: list[np.ndarray],
-    pred_items: list[tuple[np.ndarray, Optional[float]]],
-) -> tuple[list[tuple[Optional[float], float, str]], int, int]:
-    """回傳 (rows, n_gt, n_missed)。
-
-    rows 每筆 = (score, iou, status)，status ∈ {matched, false_positive}。
-    """
-    rows: list[tuple[Optional[float], float, str]] = []
+def match_frame(gt_masks, pred_items):
+    rows = []
     G, P = len(gt_masks), len(pred_items)
-
     if P == 0:
-        return rows, G, G  # 全部 GT 漏標
+        return rows, G, G
     if G == 0:
-        for _mask, score in pred_items:
-            rows.append((score, 0.0, "false_positive"))
+        for _mask, score, obj_id in pred_items:
+            rows.append((score, 0.0, "false_positive", obj_id))
         return rows, 0, 0
 
     iou = np.zeros((G, P), dtype=float)
     for gi, gm in enumerate(gt_masks):
-        for pj, (pm, _s) in enumerate(pred_items):
+        for pj, (pm, _s, _o) in enumerate(pred_items):
             iou[gi, pj] = _iou_any_shape(gm, pm)
 
-    matched_pred: dict[int, float] = {}
-    used_gt: set[int] = set()
-
+    matched_pred = {}
+    used_gt = set()
     if linear_sum_assignment is not None:
         r, c = linear_sum_assignment(-iou)
         for gi, pj in zip(r, c):
             if iou[gi, pj] > 0:
                 matched_pred[int(pj)] = float(iou[gi, pj])
                 used_gt.add(int(gi))
-    else:  # 貪婪後備
-        pairs = sorted(
-            ((iou[gi, pj], gi, pj) for gi in range(G) for pj in range(P) if iou[gi, pj] > 0),
-            reverse=True,
-        )
-        ug: set[int] = set()
-        up: set[int] = set()
+    else:
+        pairs = sorted(((iou[gi, pj], gi, pj) for gi in range(G) for pj in range(P)
+                        if iou[gi, pj] > 0), reverse=True)
+        ug, up = set(), set()
         for v, gi, pj in pairs:
             if gi in ug or pj in up:
                 continue
-            ug.add(gi)
-            up.add(pj)
-            matched_pred[pj] = float(v)
-            used_gt.add(gi)
+            ug.add(gi); up.add(pj)
+            matched_pred[pj] = float(v); used_gt.add(gi)
 
-    for pj, (_pm, score) in enumerate(pred_items):
+    for pj, (_pm, score, obj_id) in enumerate(pred_items):
         if pj in matched_pred:
-            rows.append((score, matched_pred[pj], "matched"))
+            rows.append((score, matched_pred[pj], "matched", obj_id))
         else:
-            rows.append((score, 0.0, "false_positive"))
-
-    missed = G - len(used_gt)
-    return rows, G, missed
+            rows.append((score, 0.0, "false_positive", obj_id))
+    return rows, G, G - len(used_gt)
 
 
-# ---------------------------------------------------------------------------
-# 分桶統計
-# ---------------------------------------------------------------------------
-def _bin_stats(scores: np.ndarray, ious: np.ndarray,
-               score_lo: Optional[float] = None, score_hi: Optional[float] = None) -> dict:
+def aggregate_objects(detections):
+    groups = defaultdict(list)
+    for d in detections:
+        groups[(d["video"], d["quartile"], d["obj_id"])].append(d)
+    rows = []
+    for (video, quartile, obj_id), items in groups.items():
+        scores = [it["score"] for it in items if it["score"] != ""]
+        ious = [it["iou"] for it in items]
+        any_matched = any(it["status"] == "matched" for it in items)
+        rows.append({
+            "video": video, "quartile": quartile, "obj_id": obj_id,
+            "n_frames": len(items),
+            "score": round(float(np.mean(scores)), 6) if scores else "",
+            "iou": round(float(np.mean(ious)), 6) if ious else 0.0,
+            "status": "matched" if any_matched else "false_positive",
+        })
+    return rows
+
+
+def _bin_stats(scores, ious, score_lo=None, score_hi=None):
     n = int(len(scores))
     if n == 0:
         return {"n": 0, "score_min": score_lo, "score_max": score_hi,
@@ -196,18 +178,13 @@ def _bin_stats(scores: np.ndarray, ious: np.ndarray,
         "score_min": float(np.min(scores)) if score_lo is None else float(score_lo),
         "score_max": float(np.max(scores)) if score_hi is None else float(score_hi),
         "score_median": round(float(np.median(scores)), 4),
-        "mean_iou": round(mean, 4),
-        "std_iou": round(std, 4),
-        "ci95": round(ci, 4),
-        "error_rate": round(err, 4),
-        "low_sample": n < 30,
+        "mean_iou": round(mean, 4), "std_iou": round(std, 4),
+        "ci95": round(ci, 4), "error_rate": round(err, 4), "low_sample": n < 30,
     }
 
 
-def quantile_bins(scores: list[float], ious: list[float],
-                  min_per_bin: int = 30, max_bins: int = 10) -> list[dict]:
-    s = np.asarray(scores, dtype=float)
-    v = np.asarray(ious, dtype=float)
+def quantile_bins(scores, ious, min_per_bin=30, max_bins=10):
+    s = np.asarray(scores, dtype=float); v = np.asarray(ious, dtype=float)
     N = len(s)
     if N == 0:
         return []
@@ -222,9 +199,8 @@ def quantile_bins(scores: list[float], ious: list[float],
     return bins
 
 
-def fixed_bins(scores: list[float], ious: list[float], n: int = 10) -> list[dict]:
-    s = np.asarray(scores, dtype=float)
-    v = np.asarray(ious, dtype=float)
+def fixed_bins(scores, ious, n=10):
+    s = np.asarray(scores, dtype=float); v = np.asarray(ious, dtype=float)
     edges = np.linspace(0.0, 1.0, n + 1)
     bins = []
     for i in range(n):
@@ -234,31 +210,32 @@ def fixed_bins(scores: list[float], ious: list[float], n: int = 10) -> list[dict
     return bins
 
 
-# ---------------------------------------------------------------------------
-# 輸出
-# ---------------------------------------------------------------------------
-def write_detections(path: Path, detections: list[dict]) -> None:
-    fields = ["video", "quartile", "frame", "score", "iou", "status"]
+def write_detections(path, detections):
+    fields = ["video", "quartile", "frame", "obj_id", "score", "iou", "status"]
     with path.open("w", newline="", encoding="utf-8") as f:
-        w = csv.DictWriter(f, fieldnames=fields)
-        w.writeheader()
+        w = csv.DictWriter(f, fieldnames=fields); w.writeheader()
         for d in detections:
             w.writerow(d)
 
 
-def write_bins(path: Path, bins: list[dict]) -> None:
+def write_objects(path, objects):
+    fields = ["video", "quartile", "obj_id", "n_frames", "score", "iou", "status"]
+    with path.open("w", newline="", encoding="utf-8") as f:
+        w = csv.DictWriter(f, fieldnames=fields); w.writeheader()
+        for o in objects:
+            w.writerow(o)
+
+
+def write_bins(path, bins):
     fields = ["bin", "n", "score_min", "score_max", "score_median",
               "mean_iou", "std_iou", "ci95", "error_rate", "low_sample"]
     with path.open("w", newline="", encoding="utf-8") as f:
-        w = csv.DictWriter(f, fieldnames=fields)
-        w.writeheader()
+        w = csv.DictWriter(f, fieldnames=fields); w.writeheader()
         for i, b in enumerate(bins, start=1):
-            row = {"bin": i}
-            row.update(b)
-            w.writerow(row)
+            row = {"bin": i}; row.update(b); w.writerow(row)
 
 
-def maybe_plot(quant_bins: list[dict], out_png: Path) -> Optional[str]:
+def maybe_plot(quant_bins, out_png, unit):
     try:
         import matplotlib
         matplotlib.use("Agg")
@@ -274,41 +251,33 @@ def maybe_plot(quant_bins: list[dict], out_png: Path) -> Optional[str]:
     plt.errorbar(xs, ys, yerr=es, fmt="o-", capsize=4)
     plt.xlabel("Presence score (bin median)")
     plt.ylabel("Mean IoU vs GT")
-    plt.title("Exp 3: Presence-score calibration")
-    plt.ylim(0, 1)
-    plt.grid(True, alpha=0.3)
-    plt.tight_layout()
-    plt.savefig(out_png, dpi=150)
-    plt.close()
+    plt.title(f"Exp 3: Presence-score calibration ({unit})")
+    plt.ylim(0, 1); plt.grid(True, alpha=0.3); plt.tight_layout()
+    plt.savefig(out_png, dpi=150); plt.close()
     return str(out_png)
 
 
-# ---------------------------------------------------------------------------
-# 主流程
-# ---------------------------------------------------------------------------
-def main() -> int:
-    parser = argparse.ArgumentParser(description="實驗三：Presence Score 路由有效性 calibration。")
-    parser.add_argument("--root", default=str(ROOT))
-    parser.add_argument("--exp3-dir", default=None, help="預設 <root>/tests/exp/exp3")
-    parser.add_argument("--gt-dir", default=None, help="預設 <root>/tests/exp/GT")
-    parser.add_argument("--videos", nargs="+", default=VIDEOS_DEFAULT)
-    parser.add_argument("--quartiles", type=int, nargs="+", default=QUARTILES_DEFAULT)
-    parser.add_argument("--min-per-bin", type=int, default=30)
-    parser.add_argument("--max-bins", type=int, default=10)
-    parser.add_argument("--exclude-fp", action="store_true",
-                        help="calibration 不納入 false positive（IoU=0）的偵測。")
-    parser.add_argument("--output-dir", default=None, help="預設 <exp3-dir>/_results")
-    parser.add_argument("--dry-run", action="store_true")
-    args = parser.parse_args()
+def main():
+    ap = argparse.ArgumentParser(description="實驗三：Presence Score 路由有效性 calibration。")
+    ap.add_argument("--root", default=str(ROOT))
+    ap.add_argument("--exp3-dir", default=None)
+    ap.add_argument("--gt-dir", default=None)
+    ap.add_argument("--videos", nargs="+", default=VIDEOS_DEFAULT)
+    ap.add_argument("--quartiles", type=int, nargs="+", default=QUARTILES_DEFAULT)
+    ap.add_argument("--per-object", action="store_true")
+    ap.add_argument("--min-per-bin", type=int, default=30)
+    ap.add_argument("--max-bins", type=int, default=10)
+    ap.add_argument("--exclude-fp", action="store_true")
+    ap.add_argument("--output-dir", default=None)
+    ap.add_argument("--dry-run", action="store_true")
+    args = ap.parse_args()
 
     root = Path(args.root)
     exp3_dir = Path(args.exp3_dir) if args.exp3_dir else root / "tests" / "exp" / "exp3"
     gt_dir = Path(args.gt_dir) if args.gt_dir else root / "tests" / "exp" / "GT"
     out_dir = Path(args.output_dir) if args.output_dir else exp3_dir / "_results"
 
-    # 找出 pred 與 GT 都存在的 (video, quartile)
-    pairs: list[tuple[str, int, Path, Path]] = []
-    skipped: list[str] = []
+    pairs, skipped = [], []
     for video in args.videos:
         for q in args.quartiles:
             p, g = pred_path(exp3_dir, video, q), gt_path(gt_dir, video, q)
@@ -333,78 +302,71 @@ def main() -> int:
         print("沒有任何可比對的組合，結束。")
         return 1
 
-    detections: list[dict] = []
-    per_cond: dict[str, dict] = {}
+    detections = []
+    per_cond = {}
     total_gt = total_missed = total_matched = total_fp = 0
 
     for video, q, p, g in pairs:
-        pred_coco = _load_json(p)
-        gt_coco = _load_json(g)
-        gtf = gt_masks_by_frame(gt_coco)
-        prf = pred_items_by_frame(pred_coco)
+        gtf = gt_masks_by_frame(_load_json(g))
+        prf = pred_items_by_frame(_load_json(p))
         frames = sorted(set(gtf) | set(prf))
-
         c_gt = c_missed = c_matched = c_fp = 0
-        c_ious_matched: list[float] = []
+        c_ious = []
         for fr in frames:
             rows, n_gt, missed = match_frame(gtf.get(fr, []), prf.get(fr, []))
-            c_gt += n_gt
-            c_missed += missed
-            for score, iou, status in rows:
+            c_gt += n_gt; c_missed += missed
+            for score, iou, status, obj_id in rows:
                 detections.append({
                     "video": video, "quartile": q, "frame": fr,
+                    "obj_id": "" if obj_id is None else obj_id,
                     "score": "" if score is None else round(score, 6),
                     "iou": round(iou, 6), "status": status,
                 })
                 if status == "matched":
-                    c_matched += 1
-                    c_ious_matched.append(iou)
+                    c_matched += 1; c_ious.append(iou)
                 else:
                     c_fp += 1
-
         per_cond[f"Video{video}_Q{q}"] = {
-            "frames": len(frames),
-            "gt_instances": c_gt,
-            "matched": c_matched,
-            "false_positive": c_fp,
-            "missed_gt": c_missed,
+            "frames": len(frames), "gt_instances": c_gt, "matched": c_matched,
+            "false_positive": c_fp, "missed_gt": c_missed,
             "fn_rate": round(c_missed / c_gt, 4) if c_gt else None,
-            "mean_iou_matched": round(float(np.mean(c_ious_matched)), 4) if c_ious_matched else None,
+            "mean_iou_matched": round(float(np.mean(c_ious)), 4) if c_ious else None,
         }
-        total_gt += c_gt
-        total_missed += c_missed
-        total_matched += c_matched
-        total_fp += c_fp
+        total_gt += c_gt; total_missed += c_missed
+        total_matched += c_matched; total_fp += c_fp
 
-    # calibration 用的 (score, iou) pool
-    pool = [(d["score"], d["iou"]) for d in detections if d["score"] != ""]
+    unit = "object" if args.per_object else "detection"
+    objects = aggregate_objects(detections) if args.per_object else []
+    pool_rows = objects if args.per_object else detections
     if args.exclude_fp:
-        # 重新對齊：排除 false positive
-        pool = [(d["score"], d["iou"]) for d in detections
-                if d["score"] != "" and d["status"] == "matched"]
-    no_score = sum(1 for d in detections if d["score"] == "")
-    scores = [s for s, _ in pool]
-    ious = [v for _, v in pool]
+        pool = [(r["score"], r["iou"]) for r in pool_rows
+                if r["score"] != "" and r["status"] == "matched"]
+    else:
+        pool = [(r["score"], r["iou"]) for r in pool_rows if r["score"] != ""]
+    no_score = sum(1 for r in pool_rows if r["score"] == "")
+    scores = [s for s, _ in pool]; ious = [v for _, v in pool]
 
     qbins = quantile_bins(scores, ious, min_per_bin=args.min_per_bin, max_bins=args.max_bins)
     fbins = fixed_bins(scores, ious, n=10)
 
     out_dir.mkdir(parents=True, exist_ok=True)
     write_detections(out_dir / "exp3_detections.csv", detections)
+    if args.per_object:
+        write_objects(out_dir / "exp3_objects.csv", objects)
     write_bins(out_dir / "exp3_calibration_quantile.csv", qbins)
     write_bins(out_dir / "exp3_calibration_fixed10.csv", fbins)
-    png = maybe_plot(qbins, out_dir / "exp3_calibration.png")
+    png = maybe_plot(qbins, out_dir / "exp3_calibration.png", unit)
 
     summary = {
+        "calibration_unit": unit,
         "conditions_used": list(per_cond.keys()),
         "n_detections_total": len(detections),
+        "n_objects_total": len(objects) if args.per_object else None,
         "n_in_calibration_pool": len(pool),
         "n_without_score": no_score,
         "calibration_excludes_fp": bool(args.exclude_fp),
-        "total_gt_instances": total_gt,
-        "total_matched": total_matched,
-        "total_false_positive": total_fp,
-        "total_missed_gt": total_missed,
+        "total_gt_instances": total_gt, "total_matched": total_matched,
+        "total_false_positive": total_fp, "total_missed_gt": total_missed,
         "overall_fn_rate": round(total_missed / total_gt, 4) if total_gt else None,
         "mean_iou_matched": round(
             float(np.mean([d["iou"] for d in detections if d["status"] == "matched"])), 4
@@ -414,21 +376,19 @@ def main() -> int:
         "per_condition": per_cond,
     }
     (out_dir / "exp3_summary.json").write_text(
-        json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
+        json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
 
     print("\n=== 實驗三完成 ===")
+    print(f"calibration 單位：{unit}")
     print(json.dumps({k: summary[k] for k in (
-        "n_detections_total", "n_in_calibration_pool", "total_matched",
-        "total_false_positive", "total_missed_gt", "overall_fn_rate",
-        "mean_iou_matched", "n_quantile_bins")}, ensure_ascii=False, indent=2))
+        "n_detections_total", "n_objects_total", "n_in_calibration_pool",
+        "total_matched", "total_false_positive", "total_missed_gt",
+        "overall_fn_rate", "mean_iou_matched", "n_quantile_bins")},
+        ensure_ascii=False, indent=2))
     if no_score:
-        print(f"注意：{no_score} 筆偵測沒有 score（已排除於 calibration）。")
+        print(f"注意：{no_score} 個單位沒有 score（已排除於 calibration）。")
     print(f"\n輸出寫到：{out_dir}")
-    if png:
-        print(f"  calibration 圖：{png}")
-    else:
-        print("  （未安裝 matplotlib，略過畫圖；CSV 仍可自行作圖）")
+    print(f"  calibration 圖：{png}" if png else "  （未安裝 matplotlib，略過畫圖）")
     return 0
 
 
