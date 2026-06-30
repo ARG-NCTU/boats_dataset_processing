@@ -236,6 +236,20 @@ def plot_main(pool_rows, bands, out_png, rho, p, unit, low, high):
     return str(out_png)
 
 
+def load_ignore(path):
+    """讀忽略清單 CSV(欄位:video,quartile,frame,obj_id),回傳 set。"""
+    if not path:
+        return set()
+    out = set()
+    with open(path, newline="", encoding="utf-8") as f:
+        for row in csv.DictReader(f):
+            out.add((str(row.get("video", "")).strip(),
+                     str(row.get("quartile", "")).strip(),
+                     str(row.get("frame", "")).strip(),
+                     str(row.get("obj_id", "")).strip()))
+    return out
+
+
 def main():
     ap = argparse.ArgumentParser(description="實驗三 calibration（散點+Spearman+三組+漏標）。")
     ap.add_argument("--root", default=str(ROOT))
@@ -247,9 +261,12 @@ def main():
     ap.add_argument("--low-threshold", type=float, default=0.5)
     ap.add_argument("--high-threshold", type=float, default=0.8)
     ap.add_argument("--exclude-fp", action="store_true")
+    ap.add_argument("--ignore-list", default=None,
+                    help="CSV(欄位 video,quartile,frame,obj_id):要忽略的偵測,等同 GUI ignore。")
     ap.add_argument("--output-dir", default=None)
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()
+    ignore_set = load_ignore(args.ignore_list)
 
     root = Path(args.root)
     exp3_dir = Path(args.exp3_dir) if args.exp3_dir else root / "tests" / "exp" / "exp3"
@@ -289,7 +306,11 @@ def main():
         c_gt = c_missed = c_matched = c_fp = 0
         c_ious = []
         for fr in sorted(set(gtf) | set(prf)):
-            rows, n_gt, missed = match_frame(gtf.get(fr, []), prf.get(fr, []))
+            items = prf.get(fr, [])
+            if ignore_set:
+                items = [it for it in items
+                         if (video, str(q), str(fr), str(it[2])) not in ignore_set]
+            rows, n_gt, missed = match_frame(gtf.get(fr, []), items)
             c_gt += n_gt; c_missed += missed
             for score, iou, status, obj_id in rows:
                 detections.append({
