@@ -16,8 +16,13 @@
   --per-object：每 (影片, 象限, obj_id) 聚合（score=跨幀平均=路由用的 avg_score，
                 iou=跨幀平均）。影片建議用這個。
 
-配對：遮罩 IoU 幾何最佳指派（與論文 greedy IoU 0.5 一致，不看 label 名稱）。
-  融合塊->配最接近的 GT（方法 A），另一艘 missed；誤判/非船->配不到->IoU=0(FP)。
+配對（兩種模式）
+  預設：遮罩 IoU 幾何最佳指派（不看 label 名稱）。
+        融合塊->配最接近的 GT（方法 A），另一艘 missed；誤判/非船->IoU=0(FP)。
+  --match-by-label：以 category 名稱配對（同 evaluate_video_gt / 實驗一協定）。
+        pred 需人工標好與 GT 一致的 instance 名稱（boat1、boat2...）；
+        junk 留 generic 名稱（vessel 等）會退回 obj_id、自動視為 FP。
+        同幀同名多筆 annotation 自動合併（GT 遮擋分裂免前處理）。
 
 路徑
   pred: <root>/tests/exp/exp3/Video<X>_Q<Y>/coco/annotations/instances_train2024.json
@@ -39,6 +44,7 @@ sys.path.insert(0, str(THIS_DIR))
 
 from evaluate_video_gt import (  # noqa: E402
     _load_json, _parse_frame_index, _image_maps, _annotation_to_mask, _mask_iou,
+    _category_name_by_id, _annotation_instance_key,
 )
 
 try:
@@ -95,6 +101,92 @@ def _iou_any_shape(a, b):
         b = cv2.resize(b.astype(np.uint8), (a.shape[1], a.shape[0]),
                        interpolation=cv2.INTER_NEAREST).astype(bool)
     return _mask_iou(a, b)
+
+
+# ---- label 配對模式（--match-by-label）--------------------------------------
+# instance key = category 名稱（generic 名稱如 vessel/boat 退回 obj_id 等欄位，
+# 與 evaluate_video_gt 相同邏輯）。同幀同 key 的多筆 annotation 自動 OR 合併，
+# 因此 GT 因遮擋被拆成多筆的同一 instance 會在載入時合併，無須前處理。
+
+def _norm_key(key):
+    return str(key).strip().lower()
+
+
+def gt_instances_by_frame(coco):
+    """{frame: {norm_key: mask}}，同幀同 key 合併。"""
+    images, anns = _image_maps(coco)
+    category_names = _category_name_by_id(coco)
+    out = {}
+    for image_id, image in images.items():
+        f = _parse_frame_index(image)
+        w, h = int(image["width"]), int(image["height"])
+        inst = out.setdefault(f, {})
+        for a in anns.get(image_id, []):
+            key = _annotation_instance_key(a, category_names)
+            if key is None:
+                continue
+            key = _norm_key(key)
+            mask = _annotation_to_mask(a, w, h)
+            inst[key] = mask if key not in inst else np.logical_or(inst[key], mask)
+    return out
+
+
+def pred_instances_by_frame(coco):
+    """{frame: {norm_key: (mask, score)}}，同幀同 key 遮罩合併、score 取平均。"""
+    images, anns = _image_maps(coco)
+    category_names = _category_name_by_id(coco)
+    out = {}
+    for image_id, image in images.items():
+        f = _parse_frame_index(image)
+        w, h = int(image["width"]), int(image["height"])
+        inst = out.setdefault(f, {})
+        for a in anns.get(image_id, []):
+            key = _annotation_instance_key(a, category_names)
+            if key is None:
+                continue
+            key = _norm_key(key)
+            mask = _annotation_to_mask(a, w, h)
+            score = a.get("score", None)
+            score = float(score) if score not in (None, "") else None
+            if key in inst:
+                m0, scores = inst[key]
+                inst[key] = (np.logical_or(m0, mask), scores + ([score] if score is not None else []))
+            else:
+                inst[key] = (mask, [score] if score is not None else [])
+    return out
+
+
+def match_frame_by_label(gt_inst, pred_inst):
+    """以 instance key 配對。回傳格式與 match_frame 相同。
+
+    missed 的 diagnosis 在此模式下：
+      label_mismatch_overlap  有 pred 遮罩疊到，但 label 不同（檢查 pred 標名）
+      no_pred_on_frame        該幀完全沒有 pred
+      empty_gt_mask           GT 遮罩 rasterize 失敗
+      zero_overlap            零重疊（漏偵或漂移）
+    """
+    rows = []
+    pred_masks_all = [m for m, _ in pred_inst.values()]
+    for key, (mask, scores) in pred_inst.items():
+        score = float(np.mean(scores)) if scores else None
+        if key in gt_inst:
+            rows.append((score, _iou_any_shape(gt_inst[key], mask), "matched", key))
+        else:
+            rows.append((score, 0.0, "false_positive", key))
+    missed_info = []
+    for key, gm in gt_inst.items():
+        if key in pred_inst:
+            continue
+        gt_px = int(np.count_nonzero(gm))
+        max_iou = max((_iou_any_shape(gm, pm) for pm in pred_masks_all), default=0.0)
+        diagnosis = _missed_diagnosis(gt_px, len(pred_masks_all), max_iou)
+        if diagnosis == "lost_assignment":
+            diagnosis = "label_mismatch_overlap"
+        missed_info.append({
+            "gt_idx": key, "gt_px": gt_px, "n_pred": len(pred_masks_all),
+            "max_iou": round(float(max_iou), 6), "diagnosis": diagnosis,
+        })
+    return rows, len(gt_inst), missed_info
 
 
 def _missed_diagnosis(gt_px, n_pred, max_iou):
@@ -284,6 +376,9 @@ def main():
     ap.add_argument("--videos", nargs="+", default=VIDEOS_DEFAULT)
     ap.add_argument("--quartiles", type=int, nargs="+", default=QUARTILES_DEFAULT)
     ap.add_argument("--per-object", action="store_true")
+    ap.add_argument("--match-by-label", action="store_true",
+                    help="以 category 名稱配對（同 evaluate_video_gt 的 instance 配對），"
+                         "generic 名稱（vessel/boat 等）自動退回 obj_id 視為 FP 候選。")
     ap.add_argument("--low-threshold", type=float, default=0.5)
     ap.add_argument("--high-threshold", type=float, default=0.8)
     ap.add_argument("--exclude-fp", action="store_true")
@@ -328,16 +423,27 @@ def main():
     per_cond = {}
     total_gt = total_missed = total_matched = total_fp = 0
     for video, q, p, g in pairs:
-        gtf = gt_masks_by_frame(_load_json(g))
-        prf = pred_items_by_frame(_load_json(p))
+        if args.match_by_label:
+            gtf = gt_instances_by_frame(_load_json(g))
+            prf = pred_instances_by_frame(_load_json(p))
+        else:
+            gtf = gt_masks_by_frame(_load_json(g))
+            prf = pred_items_by_frame(_load_json(p))
         c_gt = c_missed = c_matched = c_fp = 0
         c_ious = []
         for fr in sorted(set(gtf) | set(prf)):
-            items = prf.get(fr, [])
-            if ignore_set:
-                items = [it for it in items
-                         if (video, str(q), str(fr), str(it[2])) not in ignore_set]
-            rows, n_gt, missed_info = match_frame(gtf.get(fr, []), items)
+            if args.match_by_label:
+                inst = prf.get(fr, {})
+                if ignore_set:
+                    inst = {k: v for k, v in inst.items()
+                            if (video, str(q), str(fr), str(k)) not in ignore_set}
+                rows, n_gt, missed_info = match_frame_by_label(gtf.get(fr, {}), inst)
+            else:
+                items = prf.get(fr, [])
+                if ignore_set:
+                    items = [it for it in items
+                             if (video, str(q), str(fr), str(it[2])) not in ignore_set]
+                rows, n_gt, missed_info = match_frame(gtf.get(fr, []), items)
             missed = len(missed_info)
             for m in missed_info:
                 missed_records.append({
@@ -398,6 +504,7 @@ def main():
 
     summary = {
         "calibration_unit": unit,
+        "matching": "label" if args.match_by_label else "greedy_iou",
         "conditions_used": list(per_cond.keys()),
         "n_detections_total": len(detections),
         "n_objects_total": len(objects) if args.per_object else None,
