@@ -15,6 +15,13 @@ sys.path.insert(0, str(THIS_DIR))
 
 from evaluate_temporal_iou import evaluate_temporal_iou  # noqa: E402
 
+try:
+    # ASSIGNMENTS lets each pred row record which segment it annotated, so GT
+    # baseline rows can be joined to tool rows on (scene, seg).
+    from batch_evaluate_video import ASSIGNMENTS, resolve_gt  # noqa: E402
+except ImportError:  # pragma: no cover
+    ASSIGNMENTS, resolve_gt = None, None
+
 
 TOOLS = {
     "labelme": "LabelMe",
@@ -22,7 +29,33 @@ TOOLS = {
     "stamp": "STAMP",
 }
 
-DEFAULT_VIDEOS = ["A", "B"]
+DEFAULT_VIDEOS = ["A", "B", "C", "D"]
+SEGMENTS = ["Q1", "Q2", "Q3", "Q4"]
+
+
+def gt_clips(gt_dir: Path, videos: List[str]):
+    """Yield (video, seg, gt_json_path, folder_name) for each GT clip.
+
+    GT Temporal IoU is a property of the *clip*, not of a participant: there are
+    only 4 videos x 4 segments = 16 GT clips, versus 96 participant jobs. Each
+    clip is measured once and serves as the baseline that every tool annotating
+    that same clip is compared against.
+    """
+    for video in videos:
+        for seg in SEGMENTS:
+            if resolve_gt is None:
+                continue
+            gt_path, folder = resolve_gt(gt_dir=gt_dir, video=video, seg=seg)
+            if gt_path is not None:
+                yield video, seg, gt_path, folder
+
+
+def seg_for(participant: int, video: str, tool: str) -> str:
+    """Which segment this participant annotated with this tool."""
+    if ASSIGNMENTS is None:
+        return ""
+    assignment = ASSIGNMENTS.get((participant, video))
+    return assignment.get(tool, "") if assignment else ""
 
 
 def find_coco(
@@ -97,6 +130,7 @@ def write_aggregate_csv(
         "participant",
         "video",
         "scene",
+        "seg",
         "tool",
         "tool_name",
         "coco_path",
@@ -157,7 +191,7 @@ def main() -> int:
         "--videos",
         nargs="+",
         default=DEFAULT_VIDEOS,
-        help="Videos to process. Default: A B",
+        help="Videos to process. Default: A B C D",
     )
 
     parser.add_argument(
@@ -165,6 +199,24 @@ def main() -> int:
         type=Path,
         default=None,
         help="Default: <exp>/temporal_iou_summary.csv",
+    )
+
+    parser.add_argument(
+        "--gt-dir",
+        type=Path,
+        default=None,
+        help="Default: <root>/tests/exp/GT",
+    )
+
+    parser.add_argument(
+        "--include-gt",
+        action="store_true",
+        help=(
+            "Also compute Temporal IoU on each GT clip as a baseline, and "
+            "report each tool's deviation from it. Without a baseline, a raw "
+            "Temporal IoU of 1.0 cannot be told apart from copy-pasted "
+            "annotations in a static scene."
+        ),
     )
 
     parser.add_argument(
@@ -188,6 +240,21 @@ def main() -> int:
         if args.exp_dir is not None
         else root / "tests" / "exp"
     )
+
+    gt_dir = (
+        Path(args.gt_dir)
+        if args.gt_dir is not None
+        else exp_dir / "GT"
+    )
+
+    if args.include_gt:
+        if resolve_gt is None:
+            print("[ERROR] --include-gt 需要 batch_evaluate_video.py "
+                  "在同一個資料夾（用來解析 GT 路徑與 seg 對應）")
+            return 1
+        if not gt_dir.exists():
+            print(f"[ERROR] 找不到 GT 資料夾：{gt_dir}")
+            return 1
 
     aggregate_path = (
         Path(args.aggregate_csv)
@@ -311,6 +378,7 @@ def main() -> int:
                         "participant": f"P{participant}",
                         "video": f"Video {video}",
                         "scene": scene,
+                        "seg": seg_for(participant, video, tool),
                         "tool": tool,
                         "tool_name": tool_name,
                         "coco_path": str(coco_path),
@@ -341,10 +409,102 @@ def main() -> int:
 
                 completed_count += 1
 
+    # ---- GT baseline: one Temporal IoU per clip, not per participant --------
+    gt_by_clip = {}
+    if args.include_gt:
+        print("\n--- GT baseline ---")
+        for video, seg, gt_path, folder in gt_clips(gt_dir, videos):
+            scene = f"v{video.lower()}"
+            if args.dry_run:
+                print(f"[DRY-RUN] GT {scene}{seg} ({folder})")
+                print(f"          coco = {gt_path}")
+                continue
+            try:
+                summary = evaluate_temporal_iou(
+                    coco_path=gt_path,
+                    output_path=(exp_dir / "GT_temporal_iou"
+                                 / f"{scene}{seg}_gt_temporal_iou.csv"),
+                    summary_path=(exp_dir / "GT_temporal_iou"
+                                  / f"{scene}{seg}_gt_temporal_iou_summary.json"),
+                )
+            except Exception as exc:  # noqa: BLE001
+                print(f"[ERROR] GT {scene}{seg}: {type(exc).__name__}: {exc}")
+                error_count += 1
+                continue
+
+            mean_iou = summary.get("mean_temporal_iou")
+            gt_by_clip[(scene, seg)] = mean_iou
+            mean_text = (f"{mean_iou:.4f}"
+                         if isinstance(mean_iou, (int, float)) else "n/a")
+            print(f"[GT] {scene}{seg} ({folder}) frames={summary['frame_count']} "
+                  f"instances={summary['instance_count']} TemporalIoU={mean_text}")
+
+            aggregate_rows.append({
+                "participant": "GT",
+                "video": f"Video {video}",
+                "scene": scene,
+                "seg": seg,
+                "tool": "gt",
+                "tool_name": "GroundTruth",
+                "coco_path": str(gt_path),
+                "frame_count": summary.get("frame_count"),
+                "pair_count": summary.get("pair_count"),
+                "adjacent_frame_pair_count": summary.get("adjacent_frame_pair_count"),
+                "instance_count": summary.get("instance_count"),
+                "instance_names": ",".join(
+                    str(n) for n in summary.get("instance_names", [])),
+                "missing_pair_count": summary.get("missing_pair_count"),
+                "mean_temporal_iou": mean_iou,
+            })
+
     print("\n--- Summary ---")
     print(f"Completed: {completed_count}")
     print(f"Skipped:   {skipped_count}")
     print(f"Errors:    {error_count}")
+
+    # ---- pred vs GT deviation ---------------------------------------------
+    if gt_by_clip and not args.dry_run:
+        print("\n--- Temporal IoU：各工具與 GT 基準線的偏離 ---")
+        print("  正值 = 比 GT 更平滑（可能是沿用/複製上一格）")
+        print("  負值 = 比 GT 更跳動\n")
+        by_clip_tool = {}
+        for row in aggregate_rows:
+            if row["tool"] == "gt":
+                continue
+            value = row.get("mean_temporal_iou")
+            if not isinstance(value, (int, float)):
+                continue
+            by_clip_tool.setdefault((row["scene"], row["seg"]), {}) \
+                        .setdefault(row["tool"], []).append(value)
+
+        header = f"{'clip':<9}{'GT':>9}" + "".join(
+            f"{TOOLS[t]:>12}" for t in TOOLS)
+        print(header)
+        deltas = {t: [] for t in TOOLS}
+        for (scene, seg), gt_value in sorted(gt_by_clip.items()):
+            if not isinstance(gt_value, (int, float)):
+                continue
+            line = f"{scene}{seg:<7}{gt_value:>9.4f}"
+            for tool in TOOLS:
+                values = by_clip_tool.get((scene, seg), {}).get(tool)
+                if not values:
+                    line += f"{'-':>12}"
+                    continue
+                delta = sum(values) / len(values) - gt_value
+                deltas[tool].append(delta)
+                line += f"{delta:>+12.4f}"
+            print(line)
+
+        print(f"\n{'tool':<12}{'n':>4}{'mean Δ':>10}{'mean |Δ|':>11}")
+        for tool in TOOLS:
+            values = deltas[tool]
+            if not values:
+                continue
+            mean_delta = sum(values) / len(values)
+            mean_abs = sum(abs(v) for v in values) / len(values)
+            print(f"{TOOLS[tool]:<12}{len(values):>4}{mean_delta:>+10.4f}{mean_abs:>11.4f}")
+        print("\n  mean |Δ| 越小 = 時序一致性越接近真實情況。")
+        print("  這比原始 Temporal IoU 更適合跨工具比較：原始值會獎勵複製貼上。")
 
     if not args.dry_run:
         # Always overwrite the aggregate CSV, including when no job succeeds.
