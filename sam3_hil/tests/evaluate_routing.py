@@ -200,6 +200,21 @@ def _missed_diagnosis(gt_px, n_pred, max_iou):
     return "zero_overlap"           # 真的零重疊（漏偵或漂移）
 
 
+def nms_pred_items(items, iou_thr):
+    """同幀 pred 去重（NMS）：分數高者優先，與已保留者遮罩 IoU>iou_thr 的丟棄。
+    items: [(mask, score, obj_id)] → 回傳保留的子集。"""
+    order = sorted(range(len(items)),
+                   key=lambda i: (items[i][1] if items[i][1] is not None else -1.0),
+                   reverse=True)
+    kept, kept_masks = [], []
+    for i in order:
+        m, s, o = items[i]
+        if any(_iou_any_shape(m, km) > iou_thr for km in kept_masks):
+            continue
+        kept.append((m, s, o)); kept_masks.append(m)
+    return kept
+
+
 def match_frame(gt_masks, pred_items):
     rows = []
     G, P = len(gt_masks), len(pred_items)
@@ -376,6 +391,9 @@ def main():
     ap.add_argument("--videos", nargs="+", default=VIDEOS_DEFAULT)
     ap.add_argument("--quartiles", type=int, nargs="+", default=QUARTILES_DEFAULT)
     ap.add_argument("--per-object", action="store_true")
+    ap.add_argument("--pred-nms-iou", type=float, default=None,
+                    help="配對前對同幀 pred 去重：與已保留(高分)偵測 IoU>此值的丟掉。"
+                         "image 低門檻常有重複遮罩，建議 0.7。video 可不設。")
     ap.add_argument("--match-by-label", action="store_true",
                     help="以 category 名稱配對（同 evaluate_video_gt 的 instance 配對），"
                          "generic 名稱（vessel/boat 等）自動退回 obj_id 視為 FP 候選。")
@@ -443,6 +461,8 @@ def main():
                 if ignore_set:
                     items = [it for it in items
                              if (video, str(q), str(fr), str(it[2])) not in ignore_set]
+                if args.pred_nms_iou is not None:
+                    items = nms_pred_items(items, args.pred_nms_iou)
                 rows, n_gt, missed_info = match_frame(gtf.get(fr, []), items)
             missed = len(missed_info)
             for m in missed_info:

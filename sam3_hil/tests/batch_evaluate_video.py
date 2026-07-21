@@ -14,7 +14,7 @@ from evaluate_video_gt import evaluate_video_coco  # noqa: E402
 
 
 ROOT = Path("/app")
-VIDEOS = ["A", "B"]
+VIDEOS = ["A", "B", "C", "D"]
 
 TOOLS = {
     "labelme": {"display_name": "LabelMe"},
@@ -23,31 +23,67 @@ TOOLS = {
 }
 
 # Assignment from STAMP_assignment_table.xlsx.
+# Video A/B: unchanged. Video C/D: read from the "Video C" / "Video D" sheets.
 ASSIGNMENTS = {
     (1, "A"): {"labelme": "Q1", "cvat": "Q2", "stamp": "Q3"},
     (1, "B"): {"labelme": "Q2", "cvat": "Q3", "stamp": "Q4"},
+    (1, "C"): {"labelme": "Q3", "cvat": "Q4", "stamp": "Q1"},
+    (1, "D"): {"labelme": "Q4", "cvat": "Q1", "stamp": "Q2"},
 
     (2, "A"): {"labelme": "Q2", "cvat": "Q3", "stamp": "Q4"},
     (2, "B"): {"labelme": "Q3", "cvat": "Q4", "stamp": "Q1"},
+    (2, "C"): {"labelme": "Q4", "cvat": "Q1", "stamp": "Q2"},
+    (2, "D"): {"labelme": "Q1", "cvat": "Q2", "stamp": "Q3"},
 
     (3, "A"): {"labelme": "Q3", "cvat": "Q4", "stamp": "Q1"},
     (3, "B"): {"labelme": "Q4", "cvat": "Q1", "stamp": "Q2"},
+    (3, "C"): {"labelme": "Q1", "cvat": "Q2", "stamp": "Q3"},
+    (3, "D"): {"labelme": "Q2", "cvat": "Q3", "stamp": "Q4"},
 
     (4, "A"): {"labelme": "Q4", "cvat": "Q1", "stamp": "Q2"},
     (4, "B"): {"labelme": "Q1", "cvat": "Q2", "stamp": "Q3"},
+    (4, "C"): {"labelme": "Q2", "cvat": "Q3", "stamp": "Q4"},
+    (4, "D"): {"labelme": "Q3", "cvat": "Q4", "stamp": "Q1"},
 
     (5, "A"): {"labelme": "Q1", "cvat": "Q3", "stamp": "Q4"},
     (5, "B"): {"labelme": "Q2", "cvat": "Q4", "stamp": "Q1"},
+    (5, "C"): {"labelme": "Q3", "cvat": "Q1", "stamp": "Q2"},
+    (5, "D"): {"labelme": "Q4", "cvat": "Q2", "stamp": "Q3"},
 
     (6, "A"): {"labelme": "Q2", "cvat": "Q4", "stamp": "Q1"},
     (6, "B"): {"labelme": "Q3", "cvat": "Q1", "stamp": "Q2"},
+    (6, "C"): {"labelme": "Q4", "cvat": "Q2", "stamp": "Q3"},
+    (6, "D"): {"labelme": "Q1", "cvat": "Q3", "stamp": "Q4"},
 
     (7, "A"): {"labelme": "Q3", "cvat": "Q1", "stamp": "Q2"},
     (7, "B"): {"labelme": "Q4", "cvat": "Q2", "stamp": "Q3"},
+    (7, "C"): {"labelme": "Q1", "cvat": "Q3", "stamp": "Q4"},
+    (7, "D"): {"labelme": "Q2", "cvat": "Q4", "stamp": "Q1"},
 
     (8, "A"): {"labelme": "Q4", "cvat": "Q2", "stamp": "Q3"},
     (8, "B"): {"labelme": "Q1", "cvat": "Q3", "stamp": "Q4"},
+    (8, "C"): {"labelme": "Q2", "cvat": "Q4", "stamp": "Q1"},
+    (8, "D"): {"labelme": "Q3", "cvat": "Q1", "stamp": "Q2"},
 }
+
+
+def normalize_videos(videos):
+    """Normalize and validate video names."""
+    normalized = []
+
+    for video in videos:
+        name = str(video).strip().upper()
+
+        if name not in VIDEOS:
+            raise ValueError(
+                f"Unsupported video: {video}. "
+                f"Allowed values are {', '.join(VIDEOS)}."
+            )
+
+        if name not in normalized:
+            normalized.append(name)
+
+    return normalized
 
 
 def resolve_gt(gt_dir: Path, video: str, seg: str):
@@ -156,12 +192,24 @@ def main():
         default=list(range(1, 9)),
     )
     parser.add_argument(
+        "--videos",
+        nargs="+",
+        default=VIDEOS,
+        help=f"Videos to process. Default: {' '.join(VIDEOS)}",
+    )
+    parser.add_argument(
         "--aggregate-csv",
         default=None,
-        help="Default: <exp>/labelme_video_eval_summary.csv",
+        help="Default: <exp>/video_eval_summary.csv",
     )
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
+
+    try:
+        videos = normalize_videos(args.videos)
+    except ValueError as exc:
+        print(f"[ERROR] {exc}")
+        sys.exit(1)
 
     root = Path(args.root)
     exp_dir = (
@@ -183,21 +231,25 @@ def main():
     agg_path = (
         Path(args.aggregate_csv)
         if args.aggregate_csv
-        else exp_dir / "labelme_video_eval_summary.csv"
+        # Covers all three tools (LabelMe / CVAT+SAM / STAMP), not just LabelMe.
+        # The old name was a leftover from a LabelMe-only draft of this script.
+        else exp_dir / "video_eval_summary.csv"
     )
 
     dry_run_tag = " (DRY-RUN)" if args.dry_run else ""
 
     print(f"\n=== Batch video evaluation{dry_run_tag} ===")
     print(f"exp = {exp_dir}")
-    print(f"GT  = {gt_dir}\n")
+    print(f"GT  = {gt_dir}")
+    print(f"participants = {args.participants}")
+    print(f"videos       = {videos}\n")
 
     aggregate_rows = []
     ok_count = 0
     skipped_count = 0
 
     for participant in args.participants:
-        for video in VIDEOS:
+        for video in videos:
             scene = f"v{video.lower()}"
             tagname = f"p{participant}{scene}"
             pxvy_dir = exp_dir / tagname
