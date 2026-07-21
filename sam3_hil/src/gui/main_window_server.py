@@ -1529,6 +1529,28 @@ class STAMPMainWindow(QMainWindow):
         self.horizon_checkbox.setToolTip("Display detected horizon line and sky region")
         self.horizon_checkbox.stateChanged.connect(self.on_display_option_changed)
         control_layout.addWidget(self.horizon_checkbox)
+
+        # 信心類別過濾
+        self.high_checkbox = QCheckBox("HIGH")
+        self.high_checkbox.setChecked(True)
+        self.high_checkbox.stateChanged.connect(self.on_display_option_changed)
+        control_layout.addWidget(self.high_checkbox)
+
+        self.uncertain_checkbox = QCheckBox("UNCERTAIN")
+        self.uncertain_checkbox.setChecked(True)
+        self.uncertain_checkbox.stateChanged.connect(self.on_display_option_changed)
+        control_layout.addWidget(self.uncertain_checkbox)
+
+        self.low_checkbox = QCheckBox("LOW")
+        self.low_checkbox.setChecked(True)
+        self.low_checkbox.stateChanged.connect(self.on_display_option_changed)
+        control_layout.addWidget(self.low_checkbox)
+
+        # 只看選取的物件
+        self.selected_only_checkbox = QCheckBox("Selected only")
+        self.selected_only_checkbox.setChecked(False)
+        self.selected_only_checkbox.stateChanged.connect(self.on_display_option_changed)
+        control_layout.addWidget(self.selected_only_checkbox)
         
         left_layout.addLayout(control_layout)
         
@@ -2582,6 +2604,26 @@ class STAMPMainWindow(QMainWindow):
             else:
                 color = (0, 0, 255)  # 紅色
             
+            # --- 只顯示選取的物件 ---
+            if self.selected_only_checkbox.isChecked() \
+                    and selected_polygon_obj_id is not None \
+                    and det.obj_id != selected_polygon_obj_id:
+                continue
+
+            # --- 依信心類別過濾 ---
+            if det.score >= high_thresh:
+                cat = "HIGH"
+            elif det.score >= low_thresh:
+                cat = "UNCERTAIN"
+            else:
+                cat = "LOW"
+            if cat == "HIGH" and not self.high_checkbox.isChecked():
+                continue
+            if cat == "UNCERTAIN" and not self.uncertain_checkbox.isChecked():
+                continue
+            if cat == "LOW" and not self.low_checkbox.isChecked():
+                continue
+
             # 已接受的物件用藍色邊框標示
             if obj_status == "accepted":
                 border_color = (255, 200, 0)  # 青色
@@ -2949,7 +2991,9 @@ class STAMPMainWindow(QMainWindow):
             total_frames=self.video_loader.metadata.total_frames,
             fps=self.video_loader.metadata.fps,
             object_status=getattr(self, 'object_status', None),
-            jitter_frames=jitter_frames
+            jitter_frames=jitter_frames,
+            high_threshold=self.analyzer.high_threshold,
+            low_threshold=self.analyzer.low_threshold
         )
         self.timeline_widget.setVisible(True)
     
@@ -3953,8 +3997,9 @@ class STAMPMainWindow(QMainWindow):
             self.video_analysis = self.analyzer.analyze_video(self.sam3_results)
             self.update_object_list()
             self.update_analysis_display()
+            self.update_timeline()  # timeline 顏色需跟隨閾值重繪
             self.display_frame(self.current_frame)
-    
+
     def _on_processing_mode_changed(self, index):
         """Processing Mode 改變時的處理。"""
         if index == 0:
@@ -4454,7 +4499,7 @@ class STAMPMainWindow(QMainWindow):
         """當物件選擇改變時，更新 Refine 按鈕狀態。"""
         selected_items = self.object_list.selectedItems()
         self.refine_btn.setEnabled(len(selected_items) > 0 and not self.refinement_active)
-        if self.show_polygons:
+        if self.show_polygons or self.selected_only_checkbox.isChecked():
             self.display_frame(self.current_frame)
     
     def start_refinement_for_selected(self):
