@@ -47,22 +47,31 @@ class ObjectTrack:
 # Color Utilities
 # =============================================================================
 
-def confidence_to_color(confidence: float, alpha: int = 200) -> QColor:
+def confidence_to_color(
+    confidence: float,
+    alpha: int = 200,
+    high_threshold: float = 0.80,
+    low_threshold: float = 0.50
+) -> QColor:
     """Convert confidence score to color.
-    
-    GREEN (high) -> YELLOW (medium) -> RED (low)
+
+    GREEN (HIGH) -> YELLOW (UNCERTAIN) -> RED (LOW)
+
+    閾值必須由呼叫端傳入,以與 ConfidenceAnalyzer 的目前設定一致。
+    預設值僅為 fallback,不應依賴(參見 configs/config.py)。
     """
-    if confidence >= 0.8:
-        # High: Green
+    if confidence >= high_threshold:
+        # HIGH: Green
         return QColor(76, 175, 80, alpha)
-    elif confidence >= 0.5:
-        # Medium: Yellow to Orange gradient
-        t = (confidence - 0.5) / 0.3  # 0 to 1
+    elif confidence >= low_threshold:
+        # UNCERTAIN: Yellow to Orange gradient
+        span = max(1e-6, high_threshold - low_threshold)
+        t = min(1.0, max(0.0, (confidence - low_threshold) / span))
         r = int(255 - t * 30)  # 255 -> 225
         g = int(152 + t * 48)  # 152 -> 200
         return QColor(r, g, 0, alpha)
     else:
-        # Low: Red
+        # LOW: Red
         return QColor(244, 67, 54, alpha)
 
 
@@ -118,6 +127,10 @@ class TimelineCanvas(QWidget):
         self.current_frame: int = 0
         self.fps: float = 30.0
         self.jitter_frames: Set[int] = set()  # Frames with jitter events
+
+        # Confidence thresholds (由 main window 依 ConfidenceAnalyzer 現值同步)
+        self.high_threshold: float = 0.80
+        self.low_threshold: float = 0.50
         
         # View state
         self.zoom_level: float = 1.0  # pixels per frame
@@ -367,7 +380,11 @@ class TimelineCanvas(QWidget):
                 continue
             
             confidence = track.frames[frame_idx]
-            color = confidence_to_color(confidence)
+            color = confidence_to_color(
+                confidence,
+                high_threshold=self.high_threshold,
+                low_threshold=self.low_threshold
+            )
             
             # Draw bar
             bar_width = max(1, int(self.zoom_level))
@@ -574,17 +591,21 @@ class TimelineWidget(QWidget):
         total_frames: int,
         fps: float = 30.0,
         object_status: Optional[Dict[int, str]] = None,
-        jitter_frames: Optional[List[int]] = None
+        jitter_frames: Optional[List[int]] = None,
+        high_threshold: float = 0.80,
+        low_threshold: float = 0.50
     ):
         """
         Set timeline data from SAM3 results.
-        
+
         Args:
             sam3_results: Dict mapping frame_index -> FrameResult
             total_frames: Total number of frames in video
             fps: Video frame rate
             object_status: Optional dict mapping obj_id -> status
             jitter_frames: Optional list of frame indices with jitter
+            high_threshold: HIGH confidence threshold (需與 ConfidenceAnalyzer 一致)
+            low_threshold: LOW confidence threshold (需與 ConfidenceAnalyzer 一致)
         """
         # Build tracks from results
         track_data: Dict[int, Dict[int, float]] = {}  # obj_id -> {frame -> confidence}
@@ -612,8 +633,10 @@ class TimelineWidget(QWidget):
                 color=get_object_color(obj_id)
             ))
         
-        # Update canvas with jitter frames
+        # Update canvas with jitter frames + 目前的信心閾值
         self.canvas.jitter_frames = set(jitter_frames) if jitter_frames else set()
+        self.canvas.high_threshold = high_threshold
+        self.canvas.low_threshold = low_threshold
         self.canvas.set_data(tracks, total_frames, fps)
         
         # Update info label

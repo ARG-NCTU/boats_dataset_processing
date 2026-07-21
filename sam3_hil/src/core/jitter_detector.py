@@ -5,10 +5,14 @@ Jitter Detector Module
 
 Detects temporal inconsistencies (jitter) in object tracking across video frames.
 
-This is a KEY CONTRIBUTION of the thesis:
+Scene-dependent auxiliary module (see thesis ch3 M3):
 - Monitor mask shape changes between consecutive frames
 - Flag frames where tracking may have failed
-- Trigger human review when jitter is detected
+- Surface candidate review frames on the timeline
+
+Note: this module is a proxy indicator for temporal discontinuity, not a
+direct detector of identity drift. Its output is advisory only -- it does
+not feed the confidence review queue and does not affect routing or export.
 
 Jitter Detection Algorithm:
 1. For each object, compute IoU between consecutive frame masks
@@ -234,18 +238,26 @@ class JitterDetector:
         if not masks_by_frame:
             return ObjectJitterAnalysis(obj_id=obj_id, total_frames=0)
         
-        sorted_frames = sorted(masks_by_frame.keys())
+        detected_frames = sorted(masks_by_frame.keys())
+
+        # 論文 Algorithm 1 定義於「相鄰幀對 (t-1, t)」。masks_by_frame 只包含
+        # 有偵測結果的幀,直接迭代其 keys 會把不相鄰的兩幀(例如 t=3 與 t=7)
+        # 當成相鄰幀計算 IoU,使物件的正常位移被誤判為 low_iou。
+        # 改為走訪物件存在區間的完整幀序列,缺漏幀視為無效遮罩(area=0),
+        # 交由既有的 appearance / disappearance 邏輯處理。
+        frame_span = range(detected_frames[0], detected_frames[-1] + 1)
+
         analysis = ObjectJitterAnalysis(
             obj_id=obj_id,
-            total_frames=len(sorted_frames)
+            total_frames=len(frame_span)
         )
-        
+
         prev_frame = None
         prev_mask = None
         prev_area = 0
-        
-        for frame_idx in sorted_frames:
-            mask = masks_by_frame[frame_idx]
+
+        for frame_idx in frame_span:
+            mask = masks_by_frame.get(frame_idx)
             # 強制轉換為 Python int 避免 numpy integer overflow
             area = int(mask.sum()) if mask is not None else 0
             
