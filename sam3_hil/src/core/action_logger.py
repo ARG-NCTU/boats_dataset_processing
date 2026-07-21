@@ -239,11 +239,26 @@ class EfficiencyMetrics:
 
 @dataclass
 class Layer2Metrics:
-    """Offline thesis metrics derived from JSONL action logs."""
+    """Offline thesis metrics derived from JSONL action logs.
+
+    AFR (Action Frame Rate): 發生任一明確人工動作的幀比例。批次操作（如
+    approve-all 展開的事件串）以時間戳聚類（同類事件間隔 < gesture window
+    視為同一手勢）去重，記於觸發當幀。人工介入之保守下界。
+    FCR (Frame Correction Rate): 發生幾何修改動作（EDIT_ACTIONS）的幀比例，
+    恆有 FCR <= AFR。
+
+    rfr/reviewed_frames 為舊版指標（未做手勢去重、不含 ignore 動作），
+    保留欄位以維持向後相容，論文報告請使用 afr/fcr。
+    """
 
     total_frames: int
     reviewed_frames: int
     rfr: float
+
+    action_frames: int
+    afr: float
+    correction_frames: int
+    fcr: float
 
     reviewed_units: int
     pass_through_count: int
@@ -260,6 +275,8 @@ class Layer2Metrics:
 
     outcome_counts: Dict[str, int] = field(default_factory=dict)
     reviewed_frame_indices: List[int] = field(default_factory=list)
+    action_frame_indices: List[int] = field(default_factory=list)
+    correction_frame_indices: List[int] = field(default_factory=list)
     mar_fallback_used: bool = False
 
     def to_dict(self) -> Dict[str, Any]:
@@ -269,11 +286,13 @@ class Layer2Metrics:
         fallback = " (fallback denominator)" if self.mar_fallback_used else ""
         return (
             "=== STAMP Layer 2 Metrics ===\n"
-            f"RFR: {self.rfr:.4f} ({self.reviewed_frames}/{self.total_frames} frames)\n"
+            f"AFR: {self.afr:.4f} ({self.action_frames}/{self.total_frames} frames with any action)\n"
+            f"FCR: {self.fcr:.4f} ({self.correction_frames}/{self.total_frames} frames with geometry edits)\n"
             f"PTR: {self.ptr:.4f} ({self.pass_through_count}/{self.reviewed_units} units)\n"
             f"GER: {self.ger:.4f} ({self.geometry_edit_count}/{self.reviewed_units} units)\n"
             f"Reject Rate: {self.reject_rate:.4f} ({self.reject_count}/{self.reviewed_units} units)\n"
             f"MAR: {self.mar:.4f} ({self.manual_add_count}/{self.final_object_count} objects){fallback}\n"
+            f"RFR (legacy): {self.rfr:.4f} ({self.reviewed_frames}/{self.total_frames} frames)\n"
             f"Outcome Counts: {self.outcome_counts}"
         )
 
@@ -1155,6 +1174,43 @@ class SessionAnalyzer:
             return (obj_id, generation)
         raise ValueError("unit_mode must be 'object', 'frame_object', or 'instance'")
 
+    @staticmethod
+    def _cluster_gestures(
+        actions: List[ActionRecord],
+        window: float = 0.1,
+    ) -> List[Dict[str, Any]]:
+        """把事件依時間戳聚類成「手勢」。
+
+        連續同類事件、相鄰時間差 < window 秒者視為同一次使用者動作
+        （例如一鍵 approve-all 展開的事件串）。手勢的 frame 取串內第一個
+        帶 frame_idx 的事件。回傳依時間排序的手勢列表。
+        """
+        ordered = sorted(
+            (a for a in actions if a.action_type),
+            key=lambda a: (a.timestamp is None, a.timestamp or 0.0),
+        )
+        gestures: List[Dict[str, Any]] = []
+        for a in ordered:
+            if (
+                gestures
+                and gestures[-1]["action_type"] == a.action_type
+                and a.timestamp is not None
+                and gestures[-1]["last_ts"] is not None
+                and (a.timestamp - gestures[-1]["last_ts"]) < window
+            ):
+                gestures[-1]["actions"].append(a)
+                gestures[-1]["last_ts"] = a.timestamp
+                if gestures[-1]["frame_idx"] is None and a.frame_idx is not None:
+                    gestures[-1]["frame_idx"] = a.frame_idx
+            else:
+                gestures.append({
+                    "action_type": a.action_type,
+                    "frame_idx": a.frame_idx,
+                    "actions": [a],
+                    "last_ts": a.timestamp,
+                })
+        return gestures
+
     @classmethod
     def analyze_layer2_actions(
         cls,
@@ -1162,12 +1218,15 @@ class SessionAnalyzer:
         total_frames: Optional[int] = None,
         unit_mode: str = "object",
         final_object_count: Optional[int] = None,
+        gesture_window: float = 0.1,
     ) -> Layer2Metrics:
         """
         Analyze Layer 2 thesis metrics from JSONL action records.
 
-        RFR is event-based because current frame navigation logs are sparse and
-        cannot support reliable dwell-time analysis.
+        AFR/FCR are event-based frame rates with gesture de-duplication
+        (bulk operations count once, at the frame where they were triggered).
+        Frame navigation logs are too sparse for reliable dwell-time analysis,
+        so no dwell-based definition is used.
         """
         if unit_mode not in {"object", "frame_object", "instance"}:
             raise ValueError("unit_mode must be 'object', 'frame_object', or 'instance'")
@@ -1185,6 +1244,36 @@ class SessionAnalyzer:
             for action in actions
             if action.action_type == ActionType.IGNORE_OBJECT.value and action.obj_id is not None
         }
+
+        # --- AFR / FCR：手勢去重後的幀集合統計 -----------------------------
+        afr_action_types = cls._LAYER2_REVIEW_ACTIONS | {ActionType.IGNORE_OBJECT.value}
+        edit_action_values = {a.value for a in EDIT_ACTIONS}
+        action_frame_indices: Set[int] = set()
+        correction_frame_indices: Set[int] = set()
+        for gesture in cls._cluster_gestures(actions, window=gesture_window):
+            g_type = gesture["action_type"]
+            if g_type not in afr_action_types:
+                continue
+            g_frame = gesture["frame_idx"]
+            if g_type != ActionType.IGNORE_OBJECT.value:
+                # 手勢內全部作用於 ignored objects 者不計（與 outcome 指標一致）
+                kept = [
+                    a for a in gesture["actions"]
+                    if not any(
+                        obj in ignored_object_ids
+                        for obj in cls._object_ids_for_action(a)
+                    )
+                ]
+                if not kept:
+                    continue
+                g_frame = next(
+                    (a.frame_idx for a in kept if a.frame_idx is not None), g_frame
+                )
+            if g_frame is None:
+                continue
+            action_frame_indices.add(g_frame)
+            if g_type in edit_action_values:
+                correction_frame_indices.add(g_frame)
 
         for action in actions:
             action_type = action.action_type
@@ -1247,11 +1336,19 @@ class SessionAnalyzer:
 
         reviewed_frames = len(reviewed_frame_indices)
         rfr = (reviewed_frames / total_frames) if total_frames else 0.0
+        action_frames = len(action_frame_indices)
+        afr = (action_frames / total_frames) if total_frames else 0.0
+        correction_frames = len(correction_frame_indices)
+        fcr = (correction_frames / total_frames) if total_frames else 0.0
 
         return Layer2Metrics(
             total_frames=total_frames,
             reviewed_frames=reviewed_frames,
             rfr=rfr,
+            action_frames=action_frames,
+            afr=afr,
+            correction_frames=correction_frames,
+            fcr=fcr,
             reviewed_units=reviewed_units,
             pass_through_count=pass_through_count,
             geometry_edit_count=geometry_edit_count,
@@ -1264,6 +1361,8 @@ class SessionAnalyzer:
             mar=mar,
             outcome_counts=outcome_counts,
             reviewed_frame_indices=sorted(reviewed_frame_indices),
+            action_frame_indices=sorted(action_frame_indices),
+            correction_frame_indices=sorted(correction_frame_indices),
             mar_fallback_used=mar_fallback_used,
         )
 
